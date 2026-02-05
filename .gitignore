@@ -24,3 +24,6 @@ venv/
 .DS_Store
 Thumbs.db
 gateway.log
+gateway.log
+gateway_new.log
+*.log
