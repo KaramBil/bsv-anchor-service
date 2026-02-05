@@ -1,26 +1,39 @@
-# SNR BSV Gateway
+# SNR BSV Gateway ☁️
 
 Cloud gateway for SNR router monitoring with BSV blockchain anchoring.
 
-## Quick Start
+## 🚀 Quick Start
 
+**Local test:**
 ```bash
-# Local
-python snr_bsv_gateway.py
-
-# Production (Render)
-gunicorn snr_bsv_gateway:app --bind 0.0.0.0:$PORT
+python3 snr_bsv_gateway.py
 ```
 
-## URLs
-
-- **Dashboard:** https://bsv-anchor-service.onrender.com
-- **Health:** https://bsv-anchor-service.onrender.com/health
-
-## Reset
-
-```bash
-./reset_all_snr.sh
+**Production (Render):**
+```
+https://bsv-anchor-service.onrender.com
 ```
 
-**Status:** ✅ Production Ready
+## 🔄 Reset System
+
+```bash
+./reset.sh
+```
+
+This will:
+- ✅ Reset router logs (with backup)
+- ✅ Reset server data (with backup)  
+- ✅ Restart monitoring automatically
+
+## 📡 API
+
+- **Health:** `/health`
+- **Devices:** `/api/devices`
+- **Anchors:** `/anchors?router_id=xxx`
+- **Dashboard:** `/`
+
+## 🔐 Status
+
+✅ **Production Ready**  
+🌐 **Live:** https://bsv-anchor-service.onrender.com  
+₿ **BSV Testnet:** Active
