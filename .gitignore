@@ -1,29 +1,5 @@
-# Data files (generated at runtime)
-data/
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-
-# Environment
 .env
-.venv
-env/
-venv/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-gateway.log
-gateway.log
-gateway_new.log
 *.log
+gateway*.log
+__pycache__/
+*.pyc

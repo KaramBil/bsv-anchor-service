@@ -84,6 +84,22 @@ def get_router_stats(router_id):
     }
 
 
+def get_connection_status(last_seen_timestamp):
+    """Détermine l'état de connexion du routeur"""
+    if not last_seen_timestamp:
+        return "offline"
+    
+    current_time = int(datetime.now().timestamp())
+    time_diff = current_time - last_seen_timestamp
+    
+    if time_diff <= 11:
+        return "online"      # Moins de 11 secondes: Online
+    elif time_diff <= 20:
+        return "waiting"     # Entre 11 et 20 secondes: Waiting
+    else:
+        return "offline"     # Plus de 20 secondes: Offline
+
+
 def get_security_status(router_id):
     """Vérifie le statut de sécurité d'un routeur"""
     routers = load_routers()
@@ -374,6 +390,63 @@ GRIPID_DASHBOARD_HTML = """
         .badge-pending {
             background: var(--status-pending);
             color: white;
+        }
+        
+        .badges-container {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .connection-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+        
+        .badge-online {
+            background: #10b981;
+            color: white;
+        }
+        
+        .badge-waiting {
+            background: #f59e0b;
+            color: white;
+            animation: pulse-waiting 2s infinite;
+        }
+        
+        @keyframes pulse-waiting {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        
+        .badge-offline {
+            background: #6b7280;
+            color: white;
+        }
+        
+        .connection-info {
+            padding: 10px 0;
+            border-bottom: 1px solid #e5e7eb;
+            margin-bottom: 15px;
+        }
+        
+        .connection-info .info-label {
+            font-size: 12px;
+            color: #6b7280;
+            font-weight: 500;
+        }
+        
+        .connection-info .info-value {
+            font-size: 13px;
+            color: #111827;
+            font-weight: 600;
+            margin-left: 8px;
         }
         
         .badge-no-data {
@@ -725,9 +798,20 @@ GRIPID_DASHBOARD_HTML = """
                 <div class="device-card status-{{ device.security_status }}">
                     <div class="device-header">
                         <div class="device-id">{{ device.name }}</div>
-                        <span class="security-badge badge-{{ device.security_status }}">
-                            {{ device.security_badge }}
-                        </span>
+                        <div class="badges-container">
+                            <span class="connection-badge badge-{{ device.connection_status }}">
+                                {{ device.connection_badge }}
+                            </span>
+                            <span class="security-badge badge-{{ device.security_status }}">
+                                {{ device.security_badge }}
+                            </span>
+                        </div>
+                    </div>
+                    
+                    <!-- Connection Status -->
+                    <div class="connection-info">
+                        <span class="info-label">Last Update:</span>
+                        <span class="info-value">{{ device.last_seen_relative }}</span>
                     </div>
                     
                     <!-- Security Hash Comparison -->
@@ -1119,22 +1203,43 @@ def dashboard():
         stats = get_router_stats(router_id)
         security = get_security_status(router_id)
         last_anchor = stats["last_anchor"]
+        last_seen_ts = router_info.get("last_seen")
+        connection_status = get_connection_status(last_seen_ts)
         
-        # Déterminer le badge et message
+        # Déterminer le badge et message de sécurité
         if security["status"] == "secure":
-            badge = "🟢 SECURE"
+            security_badge = "🟢 SECURE"
             match_msg = "✅ HASHES MATCH - System Integrity Verified"
             secure_count += 1
         elif security["status"] == "breach":
-            badge = "🔴 SECURITY ALERT"
+            security_badge = "🔴 SECURITY ALERT"
             match_msg = "❌ HASH MISMATCH - Possible Tampering Detected!"
             breach_count += 1
         elif security["status"] == "pending":
-            badge = "⏳ PENDING"
+            security_badge = "⏳ PENDING"
             match_msg = "⏳ Waiting for blockchain anchor confirmation..."
         else:
-            badge = "⚪ NO DATA"
+            security_badge = "⚪ NO DATA"
             match_msg = "No security data available yet"
+        
+        # Déterminer le badge de connexion
+        if connection_status == "online":
+            connection_badge = "🟢 ONLINE"
+            connection_class = "status-online"
+        elif connection_status == "waiting":
+            connection_badge = "🟡 WAITING"
+            connection_class = "status-waiting"
+        else:
+            connection_badge = "⚫ OFFLINE"
+            connection_class = "status-offline"
+        
+        # Calculer le temps depuis la dernière vue
+        if last_seen_ts:
+            current_time = int(datetime.now().timestamp())
+            seconds_ago = current_time - last_seen_ts
+            last_seen_str = f"{seconds_ago}s ago"
+        else:
+            last_seen_str = "Never"
         
         devices.append({
             "id": router_id,
@@ -1142,8 +1247,12 @@ def dashboard():
             "ip": router_info.get("last_ip", "Unknown"),
             "total_anchors": stats["total_anchors"],
             "last_seen": datetime.fromtimestamp(last_anchor["timestamp"]).strftime("%Y-%m-%d %H:%M:%S") if last_anchor else "Never",
+            "last_seen_relative": last_seen_str,
+            "connection_status": connection_status,
+            "connection_badge": connection_badge,
+            "connection_class": connection_class,
             "security_status": security["status"],
-            "security_badge": badge,
+            "security_badge": security_badge,
             "local_hash": security["local_hash"] or "N/A",
             "blockchain_hash": security["blockchain_hash"] or "N/A",
             "match_message": match_msg
@@ -1290,19 +1399,30 @@ def get_anchors():
 
 @app.route('/api/devices', methods=['GET'])
 def get_devices():
-    """Liste des devices avec statut de sécurité"""
+    """Liste des devices avec statut de sécurité et connexion"""
     routers = load_routers()
     devices = []
     
     for router_id, router_info in routers.items():
         stats = get_router_stats(router_id)
         security = get_security_status(router_id)
+        last_seen = router_info.get("last_seen")
+        connection_status = get_connection_status(last_seen)
+        
+        # Calculer le temps depuis la dernière connexion
+        if last_seen:
+            current_time = int(datetime.now().timestamp())
+            seconds_ago = current_time - last_seen
+        else:
+            seconds_ago = None
         
         devices.append({
             "id": router_id,
             "name": router_info.get("name"),
             "ip": router_info.get("last_ip"),
-            "last_seen": router_info.get("last_seen"),
+            "last_seen": last_seen,
+            "seconds_ago": seconds_ago,
+            "connection_status": connection_status,
             "total_anchors": stats["total_anchors"],
             "security_status": security["status"],
             "local_hash": security["local_hash"],
