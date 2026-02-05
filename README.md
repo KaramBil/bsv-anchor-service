@@ -1,9 +1,26 @@
-# BSV Anchor Service
+# SNR BSV Gateway
 
-Gateway service for anchoring SNR hashes to Bitcoin SV blockchain.
+Cloud gateway for SNR router monitoring with BSV blockchain anchoring.
 
-## Deployment on Render
+## Quick Start
 
-- Runtime: Python 3
-- Build: `pip install -r requirements.txt`
-- Start: `gunicorn snr_bsv_gateway:app`
+```bash
+# Local
+python snr_bsv_gateway.py
+
+# Production (Render)
+gunicorn snr_bsv_gateway:app --bind 0.0.0.0:$PORT
+```
+
+## URLs
+
+- **Dashboard:** https://bsv-anchor-service.onrender.com
+- **Health:** https://bsv-anchor-service.onrender.com/health
+
+## Reset
+
+```bash
+./reset_all_snr.sh
+```
+
+**Status:** ✅ Production Ready
