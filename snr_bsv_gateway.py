@@ -16,6 +16,11 @@ from pathlib import Path
 BSV_TESTNET_WIF = os.getenv("BSV_TESTNET_WIF", "cVEVNHpneqzMrghQPhxy6JLcRB2Czgjr9Fg9XWfDdh9ac9Te1mTh")
 ADMIN_ADDRESS = "msPsaYnrUJEwu3uRJQ4WmR7xnzCJWkLrjK"
 
+# Intervalle d'ancrage BSV (en secondes)
+# Le cloud reçoit les hashs toutes les 10s mais ancre sur BSV moins fréquemment
+# Cela crée une fenêtre de détection pour les modifications de logs
+BSV_ANCHOR_INTERVAL = int(os.getenv("BSV_ANCHOR_INTERVAL", "3600"))  # 1 heure par défaut
+
 # Ajouter le projet gripid au path (si en local)
 BSV_PROJECT = Path("/home/karam/Bureau/SNR/bsv/gripid_bsv_chain")
 if BSV_PROJECT.exists():
@@ -101,45 +106,51 @@ def get_connection_status(last_seen_timestamp):
 
 
 def get_security_status(router_id):
-    """Vérifie le statut de sécurité d'un routeur"""
+    """
+    Vérifie le statut de sécurité d'un routeur.
+    Compare local_hash (actuel) vs blockchain_hash (dernier ancré).
+    Avec ancrage différé, un mismatch indique une modification détectée.
+    """
     routers = load_routers()
-    anchors = load_anchors()
-    
     router_info = routers.get(router_id, {})
-    local_hash = router_info.get("current_local_hash", "")
     
-    # Trouver le dernier anchor blockchain pour ce routeur
-    router_anchors = [a for a in anchors if a.get("router_id") == router_id]
+    # Hash actuel du routeur (reçu toutes les 10s)
+    local_hash = router_info.get("local_hash", "")
     
-    if not router_anchors:
+    # Hash ancré sur blockchain (mis à jour selon BSV_ANCHOR_INTERVAL)
+    blockchain_hash = router_info.get("blockchain_hash", "")
+    
+    # Si pas de données
+    if not local_hash and not blockchain_hash:
         return {
             "status": "no_data",
-            "local_hash": local_hash,
-            "blockchain_hash": None,
-            "match": False
+            "local_hash": "",
+            "blockchain_hash": "",
+            "match": False,
+            "last_anchor_time": 0,
+            "txid": ""
         }
-    
-    last_anchor = router_anchors[-1]
-    blockchain_hash = last_anchor.get("snr_hash", "")
     
     # Vérifier si les hash matchent
     is_match = (local_hash.lower() == blockchain_hash.lower()) if local_hash and blockchain_hash else False
     
     # Déterminer le statut
-    if not local_hash:
-        status = "pending"
+    if not blockchain_hash:
+        status = "pending"  # Jamais ancré sur BSV
+    elif not local_hash:
+        status = "pending"  # Pas de hash local reçu
     elif is_match:
-        status = "secure"
+        status = "secure"   # Hash match: intégrité OK
     else:
-        status = "breach"
+        status = "breach"   # Hash mismatch: MODIFICATION DÉTECTÉE
     
     return {
         "status": status,
         "local_hash": local_hash,
         "blockchain_hash": blockchain_hash,
         "match": is_match,
-        "last_anchor_time": last_anchor.get("timestamp", 0),
-        "txid": last_anchor.get("txid", "")
+        "last_anchor_time": router_info.get("last_anchor_time", 0),
+        "txid": router_info.get("last_txid", "")
     }
 
 
@@ -1317,7 +1328,12 @@ def health():
 
 @app.route('/anchor', methods=['POST'])
 def anchor():
-    """Ancre un hash SNR sur BSV"""
+    """
+    Reçoit un hash SNR du routeur et l'ancre sur BSV selon l'intervalle configuré.
+    - Reçoit: toutes les 10 secondes (local_hash update)
+    - Ancre BSV: toutes les heures (blockchain_hash update)
+    - Détection fraude: local_hash ≠ blockchain_hash pendant la fenêtre
+    """
     try:
         data = request.get_json() or {}
         snr_hash = data.get('hash') or request.form.get('hash')
@@ -1329,56 +1345,96 @@ def anchor():
         if not snr_hash:
             return jsonify({"error": "hash manquant"}), 400
         
-        # Vérifier si déjà ancré
-        anchors = load_anchors()
-        if anchors and anchors[-1].get("snr_hash") == snr_hash:
-            return jsonify({
-                "status": "already_anchored",
-                "txid": anchors[-1]["txid"],
-                "message": "Hash déjà ancré"
-            })
+        current_timestamp = int(datetime.now().timestamp())
         
-        # Ancrer sur BSV
-        print(f"📤 [{datetime.now().strftime('%H:%M:%S')}] Ancrage GripID: {router_name} ({router_id[:16]}...)")
-        print(f"   Hash: {snr_hash[:32]}...")
-        
-        txid = send_hash_to_bsv(snr_hash)
-        
-        # Sauvegarder l'ancrage
-        entry = {
-            "txid": txid,
-            "snr_hash": snr_hash,
-            "timestamp": int(datetime.now().timestamp()),
-            "blocks_count": int(blocks_count),
-            "router_id": router_id,
-            "router_ip": router_ip
-        }
-        
-        anchors.append(entry)
-        save_anchors(anchors)
-        
-        # Mettre à jour les infos du routeur (avec hash local actuel)
+        # Charger les infos routeurs existantes
         routers = load_routers()
-        routers[router_id] = {
-            "name": router_name,
-            "last_ip": router_ip,
-            "last_seen": entry["timestamp"],
-            "current_local_hash": snr_hash  # Sauvegarder le hash local actuel
-        }
-        save_routers(routers)
+        router_info = routers.get(router_id, {})
         
-        print(f"   ✅ TXID: {txid}")
-        print(f"   🌐 https://test.whatsonchain.com/tx/{txid}")
+        # Mettre à jour le hash local (reçu du routeur)
+        router_info["name"] = router_name
+        router_info["last_ip"] = router_ip
+        router_info["last_seen"] = current_timestamp
+        router_info["local_hash"] = snr_hash  # Hash actuel du routeur
         
-        return jsonify({
-            "status": "success",
-            "txid": txid,
-            "explorer_url": f"https://test.whatsonchain.com/tx/{txid}",
-            "timestamp": entry["timestamp"]
-        })
+        # Déterminer si on doit ancrer sur BSV
+        last_anchor_time = router_info.get("last_anchor_time", 0)
+        time_since_anchor = current_timestamp - last_anchor_time
+        should_anchor = time_since_anchor >= BSV_ANCHOR_INTERVAL
+        
+        # Initialiser blockchain_hash si première fois
+        if "blockchain_hash" not in router_info:
+            should_anchor = True  # Forcer l'ancrage initial
+        
+        # Ancrer sur BSV si nécessaire
+        if should_anchor:
+            print(f"📤 [{datetime.now().strftime('%H:%M:%S')}] Ancrage BSV: {router_name} ({router_id[:16]}...)")
+            print(f"   Hash: {snr_hash[:32]}...")
+            print(f"   Temps écoulé: {time_since_anchor}s (interval: {BSV_ANCHOR_INTERVAL}s)")
+            
+            try:
+                txid = send_hash_to_bsv(snr_hash)
+                
+                # Sauvegarder l'ancrage
+                anchors = load_anchors()
+                entry = {
+                    "txid": txid,
+                    "snr_hash": snr_hash,
+                    "timestamp": current_timestamp,
+                    "blocks_count": int(blocks_count),
+                    "router_id": router_id,
+                    "router_ip": router_ip
+                }
+                anchors.append(entry)
+                save_anchors(anchors)
+                
+                # Mettre à jour le hash blockchain et le timestamp
+                router_info["blockchain_hash"] = snr_hash
+                router_info["last_anchor_time"] = current_timestamp
+                router_info["last_txid"] = txid
+                
+                print(f"   ✅ TXID: {txid}")
+                print(f"   🌐 https://test.whatsonchain.com/tx/{txid}")
+                
+                routers[router_id] = router_info
+                save_routers(routers)
+                
+                return jsonify({
+                    "status": "anchored",
+                    "txid": txid,
+                    "explorer_url": f"https://test.whatsonchain.com/tx/{txid}",
+                    "timestamp": current_timestamp,
+                    "next_anchor_in": BSV_ANCHOR_INTERVAL
+                })
+                
+            except Exception as anchor_error:
+                print(f"   ❌ Erreur ancrage BSV: {anchor_error}")
+                # Même en cas d'erreur, on sauvegarde le local_hash
+                routers[router_id] = router_info
+                save_routers(routers)
+                return jsonify({"error": f"Ancrage BSV échoué: {anchor_error}"}), 500
+        
+        else:
+            # Pas d'ancrage, juste mise à jour local_hash
+            routers[router_id] = router_info
+            save_routers(routers)
+            
+            next_anchor_in = BSV_ANCHOR_INTERVAL - time_since_anchor
+            
+            print(f"📥 [{datetime.now().strftime('%H:%M:%S')}] Hash reçu: {router_name} ({router_id[:16]}...)")
+            print(f"   Prochain ancrage dans: {next_anchor_in}s ({next_anchor_in // 60} min)")
+            
+            return jsonify({
+                "status": "received",
+                "message": "Hash reçu, ancrage BSV reporté",
+                "next_anchor_in": next_anchor_in,
+                "timestamp": current_timestamp
+            })
         
     except Exception as e:
         print(f"   ❌ Erreur: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
