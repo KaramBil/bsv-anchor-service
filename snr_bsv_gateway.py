@@ -8,6 +8,7 @@ Multi-router monitoring with BSV blockchain anchoring and security breach detect
 import json
 import os
 import sys
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -505,6 +506,104 @@ GRIPID_DASHBOARD_HTML = """
             text-decoration: underline;
         }
         
+        /* Reset Button */
+        .reset-section {
+            text-align: center;
+            margin-top: 30px;
+            padding: 20px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 10px;
+        }
+        
+        .btn-reset {
+            background: #dc3545;
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 700;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+        
+        .btn-reset:hover {
+            background: #c82333;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(220, 53, 69, 0.4);
+        }
+        
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.7);
+        }
+        
+        .modal-content {
+            background: white;
+            margin: 15% auto;
+            padding: 30px;
+            border-radius: 15px;
+            width: 90%;
+            max-width: 500px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        }
+        
+        .modal-header {
+            color: #dc3545;
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 20px;
+        }
+        
+        .modal-body {
+            margin-bottom: 20px;
+            color: #666;
+            line-height: 1.6;
+        }
+        
+        .modal-input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            margin-top: 10px;
+        }
+        
+        .modal-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 20px;
+        }
+        
+        .btn-cancel {
+            background: #6c757d;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        
+        .btn-confirm {
+            background: #dc3545;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        
         /* Empty State */
         .empty-state {
             text-align: center;
@@ -519,7 +618,64 @@ GRIPID_DASHBOARD_HTML = """
     </style>
     <script>
         // Auto-refresh toutes les 15 secondes
-        setTimeout(function(){ location.reload(); }, 15000);
+        let autoRefresh = setTimeout(function(){ location.reload(); }, 15000);
+        
+        // Reset System Functions
+        function showResetModal() {
+            document.getElementById('resetModal').style.display = 'block';
+            clearTimeout(autoRefresh); // Stop auto-refresh pendant modal
+        }
+        
+        function hideResetModal() {
+            document.getElementById('resetModal').style.display = 'none';
+            autoRefresh = setTimeout(function(){ location.reload(); }, 15000); // Restart auto-refresh
+        }
+        
+        function confirmReset() {
+            const adminCode = document.getElementById('adminCode').value;
+            
+            if (!adminCode) {
+                alert('⚠️ Veuillez entrer le code admin');
+                return;
+            }
+            
+            // Désactiver le bouton
+            const btn = document.getElementById('confirmResetBtn');
+            btn.disabled = true;
+            btn.textContent = 'Reset en cours...';
+            
+            fetch('/reset', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ admin_code: adminCode })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert('✅ Système réinitialisé avec succès!\\n\\nBackup créé: ' + data.backup_timestamp);
+                    window.location.reload();
+                } else {
+                    alert('❌ Erreur: ' + (data.error || 'Erreur inconnue'));
+                    btn.disabled = false;
+                    btn.textContent = 'Confirmer Reset';
+                }
+            })
+            .catch(error => {
+                alert('❌ Erreur réseau: ' + error);
+                btn.disabled = false;
+                btn.textContent = 'Confirmer Reset';
+            });
+        }
+        
+        // Close modal si click outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('resetModal');
+            if (event.target == modal) {
+                hideResetModal();
+            }
+        }
     </script>
 </head>
 <body>
@@ -624,11 +780,52 @@ GRIPID_DASHBOARD_HTML = """
             {% endif %}
         </div>
         
+        <!-- Reset Section -->
+        <div class="reset-section">
+            <p style="color: white; margin-bottom: 10px; font-size: 14px;">
+                🛠️ Administration
+            </p>
+            <button class="btn-reset" onclick="showResetModal()">
+                🗑️ Reset System
+            </button>
+        </div>
+        
         <!-- Footer -->
         <div class="footer-info">
             Auto-refresh every 15 seconds | 
             Admin: {{ admin_address }} | 
             Powered by <strong>GripID.eu</strong>
+        </div>
+    </div>
+    
+    <!-- Reset Modal -->
+    <div id="resetModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                ⚠️ Reset Système
+            </div>
+            <div class="modal-body">
+                <p><strong>ATTENTION:</strong> Cette opération va:</p>
+                <ul style="margin-left: 20px; margin-top: 10px;">
+                    <li>Effacer tous les routeurs enregistrés</li>
+                    <li>Effacer tous les anchors BSV</li>
+                    <li>Créer un backup automatique</li>
+                </ul>
+                <p style="margin-top: 15px; color: #dc3545; font-weight: 600;">
+                    Cette action est irréversible (sauf via backup).
+                </p>
+                <input 
+                    type="password" 
+                    id="adminCode" 
+                    class="modal-input" 
+                    placeholder="Code admin (GRIPID2026)"
+                    onkeypress="if(event.key === 'Enter') confirmReset()"
+                >
+            </div>
+            <div class="modal-buttons">
+                <button class="btn-cancel" onclick="hideResetModal()">Annuler</button>
+                <button class="btn-confirm" id="confirmResetBtn" onclick="confirmReset()">Confirmer Reset</button>
+            </div>
         </div>
     </div>
 </body>
@@ -1121,6 +1318,48 @@ def api_security_status(router_id):
     """API pour obtenir le statut de sécurité d'un routeur"""
     security = get_security_status(router_id)
     return jsonify(security)
+
+
+@app.route('/reset', methods=['POST'])
+def reset_system():
+    """Reset complet du système (admin only)"""
+    try:
+        # Vérifier le code admin (simple protection)
+        data = request.get_json() or {}
+        admin_code = data.get('admin_code', '')
+        
+        # Code admin simple (à changer en production!)
+        if admin_code != "GRIPID2026":
+            return jsonify({"error": "Code admin incorrect"}), 403
+        
+        # Backup des données actuelles
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        if ANCHORS_FILE.exists():
+            backup_anchors = DATA_DIR / f"anchors_{timestamp}.backup"
+            shutil.copy(ANCHORS_FILE, backup_anchors)
+            print(f"💾 Backup anchors: {backup_anchors}")
+        
+        if ROUTERS_FILE.exists():
+            backup_routers = DATA_DIR / f"routers_{timestamp}.backup"
+            shutil.copy(ROUTERS_FILE, backup_routers)
+            print(f"💾 Backup routers: {backup_routers}")
+        
+        # Reset des fichiers
+        ANCHORS_FILE.write_text("[]")
+        ROUTERS_FILE.write_text("{}")
+        
+        print("🗑️  Système réinitialisé!")
+        
+        return jsonify({
+            "status": "success",
+            "message": "Système réinitialisé avec succès",
+            "backup_timestamp": timestamp
+        })
+        
+    except Exception as e:
+        print(f"❌ Erreur reset: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 # ============================================================================
