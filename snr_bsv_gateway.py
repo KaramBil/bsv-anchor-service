@@ -105,6 +105,7 @@ DATA_DIR.mkdir(exist_ok=True)
 ANCHORS_FILE = DATA_DIR / "anchors.json"
 ROUTERS_FILE = DATA_DIR / "routers.json"
 FORENSICS_FILE = DATA_DIR / "forensics.json"
+FORENSIC_REQUESTS_FILE = DATA_DIR / "forensic_requests.json"
 
 
 # ============================================================================
@@ -157,6 +158,24 @@ def save_forensics(forensics):
         FORENSICS_FILE.write_text(json.dumps(forensics, indent=2))
     except Exception as e:
         print(f"❌ Erreur sauvegarde forensics: {e}")
+
+
+def load_forensic_requests():
+    """Charge les requêtes forensiques depuis le fichier JSON"""
+    if not FORENSIC_REQUESTS_FILE.exists():
+        return {}
+    try:
+        return json.loads(FORENSIC_REQUESTS_FILE.read_text())
+    except:
+        return {}
+
+
+def save_forensic_requests(requests):
+    """Sauvegarde les requêtes forensiques dans le fichier JSON"""
+    try:
+        FORENSIC_REQUESTS_FILE.write_text(json.dumps(requests, indent=2))
+    except Exception as e:
+        print(f"❌ Erreur sauvegarde forensic requests: {e}")
 
 
 def save_routers(routers):
@@ -1702,6 +1721,63 @@ def receive_forensics():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/forensic-request/<router_id>', methods=['GET', 'POST', 'DELETE'])
+def forensic_request(router_id):
+    """
+    Gère les requêtes forensiques on-demand
+    GET: Vérifie s'il y a une requête pending (pour le routeur qui poll)
+    POST: Crée une nouvelle requête forensique (depuis l'admin DMS)
+    DELETE: Supprime une requête (après traitement)
+    """
+    requests = load_forensic_requests()
+    
+    if request.method == 'GET':
+        # Le routeur vérifie s'il y a une requête pending
+        if router_id in requests:
+            req = requests[router_id]
+            if req.get("status") == "pending":
+                return jsonify({
+                    "has_request": True,
+                    "request_id": req.get("request_id"),
+                    "created_at": req.get("created_at"),
+                    "admin_message": "Admin demande l'envoi des logs forensiques"
+                })
+        
+        return jsonify({"has_request": False})
+    
+    elif request.method == 'POST':
+        # L'admin crée une nouvelle requête forensique
+        import time
+        request_id = f"FR-{router_id}-{int(time.time())}"
+        
+        requests[router_id] = {
+            "request_id": request_id,
+            "router_id": router_id,
+            "status": "pending",
+            "created_at": int(time.time()),
+            "created_by": "admin"
+        }
+        
+        save_forensic_requests(requests)
+        
+        print(f"🔍 Nouvelle requête forensique créée: {request_id}")
+        
+        return jsonify({
+            "status": "success",
+            "request_id": request_id,
+            "message": "Requête forensique créée. Le routeur enverra ses logs sous peu."
+        })
+    
+    elif request.method == 'DELETE':
+        # Supprimer la requête (après traitement)
+        if router_id in requests:
+            del requests[router_id]
+            save_forensic_requests(requests)
+            return jsonify({"status": "success", "message": "Request deleted"})
+        
+        return jsonify({"status": "error", "message": "Request not found"}), 404
+
+
 @app.route('/request-forensic-analysis/<router_id>', methods=['POST'])
 def request_forensic_analysis(router_id):
     """Déclenche l'analyse forensique en demandant au routeur d'envoyer tous ses logs"""
@@ -1711,8 +1787,6 @@ def request_forensic_analysis(router_id):
     
     if router_id not in routers:
         return jsonify({"status": "error", "message": "Router not found"}), 404
-    
-    router_info = routers[router_id]
     
     # Vérifier si on a déjà des données forensiques récentes (moins de 2 minutes)
     forensics = load_forensics()
@@ -1732,12 +1806,24 @@ def request_forensic_analysis(router_id):
             "forensic_id": recent_forensics[-1]  # Le plus récent
         })
     
-    # On ne peut pas déclencher l'analyse depuis Render (pas d'accès SSH au routeur)
-    # On retourne un message demandant à l'utilisateur de déclencher manuellement
+    # Créer une requête forensique on-demand
+    requests = load_forensic_requests()
+    request_id = f"FR-{router_id}-{int(time.time())}"
+    
+    requests[router_id] = {
+        "request_id": request_id,
+        "router_id": router_id,
+        "status": "pending",
+        "created_at": int(time.time()),
+        "created_by": "admin"
+    }
+    
+    save_forensic_requests(requests)
+    
     return jsonify({
         "status": "pending",
-        "message": "Request sent to router, waiting for data...",
-        "note": "Le routeur enverra automatiquement les données forensiques lors de la prochaine détection de breach."
+        "request_id": request_id,
+        "message": "Request sent to router, waiting for data..."
     })
 
 
