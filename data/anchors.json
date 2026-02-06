@@ -1,0 +1,26 @@
+[
+  {
+    "txid": "b38d0a584fa5c6bb621f4003c3a54b8278a0fb90dfbc4c69660c2a2881c96d53",
+    "snr_hash": "0c15e883dee85bb2f3540a47ec58f617a2547117f9096417ba5422268029f501",
+    "timestamp": 1770305188,
+    "blocks_count": 100,
+    "router_id": "Router-GTEN-TEST",
+    "router_ip": "192.168.2.1"
+  },
+  {
+    "txid": "1bce32488eeac4c89cfeed22b3938357f43bd05027f33fbd75c29c0130f7f672",
+    "snr_hash": "bc8cb797809ebd2774fe4df2a2c7fdc4fb575146553e45bec504ae93ac0a0eeb",
+    "timestamp": 1770305241,
+    "blocks_count": 101,
+    "router_id": "Router-GTEN-TEST",
+    "router_ip": "192.168.2.1"
+  },
+  {
+    "txid": "c0d1fbdfa01675e469ee025b416d0f9434f99c67c7768cd39e9179b79a77626c",
+    "snr_hash": "e7d4ce5d7a39261f8ad630e426903731127f59d47fc6556c7b4b78ca4f984cb0",
+    "timestamp": 1770305304,
+    "blocks_count": 102,
+    "router_id": "Router-GTEN-TEST",
+    "router_ip": "192.168.2.1"
+  }
+]

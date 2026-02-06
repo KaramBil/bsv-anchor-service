@@ -15,6 +15,23 @@ from datetime import datetime
 from pathlib import Path
 from flask import Flask, request, jsonify, render_template_string, redirect
 
+# Import du module database SQLite
+try:
+    from database import (
+        init_db,
+        add_or_update_router,
+        get_all_routers as db_get_all_routers,
+        get_router,
+        update_router_status,
+        get_router_history
+    )
+    USE_DATABASE = True
+    print("✅ Module database SQLite chargé")
+except ImportError as e:
+    print(f"⚠️  Module database non disponible: {e}")
+    print("   Utilisation des fichiers JSON")
+    USE_DATABASE = False
+
 # Configuration
 BSV_TESTNET_WIF = os.getenv("BSV_TESTNET_WIF", "cVEVNHpneqzMrghQPhxy6JLcRB2Czgjr9Fg9XWfDdh9ac9Te1mTh")
 ADMIN_ADDRESS = "msPsaYnrUJEwu3uRJQ4WmR7xnzCJWkLrjK"
@@ -96,46 +113,71 @@ def save_anchors(anchors):
 
 def load_routers():
     """Charge les infos des routeurs"""
-    if not ROUTERS_FILE.exists():
-        return {}
-    try:
-        return json.loads(ROUTERS_FILE.read_text())
-    except:
-        return {}
+    if USE_DATABASE:
+        # Utiliser la base de données SQLite
+        return db_get_all_routers()
+    else:
+        # Fallback vers fichiers JSON
+        if not ROUTERS_FILE.exists():
+            return {}
+        try:
+            return json.loads(ROUTERS_FILE.read_text())
+        except:
+            return {}
 
 
 def save_routers(routers):
     """Sauvegarde les infos des routeurs"""
-    ROUTERS_FILE.write_text(json.dumps(routers, indent=2))
+    if USE_DATABASE:
+        # Pas besoin de sauvegarder manuellement avec SQLite
+        # Les données sont déjà persistées dans add_or_update_router()
+        pass
+    else:
+        # Fallback vers fichiers JSON
+        ROUTERS_FILE.write_text(json.dumps(routers, indent=2))
 
 
 def get_all_routers():
     """
-    Récupère tous les routeurs : enregistrés (persistants) + actifs (volatiles)
+    Récupère tous les routeurs : depuis la base de données SQLite
     
-    Les routeurs dans REGISTERED_ROUTERS sont toujours visibles sur le dashboard,
-    même après un redéploiement Render, avec le statut "inactive" par défaut.
-    
-    Dès qu'un routeur envoie des données, il passe automatiquement à "active".
+    Avec SQLite, tous les routeurs sont persistés automatiquement.
+    Plus besoin de "pinned routers" - tout est dans la DB !
     """
-    # Charger l'état volatile (depuis routers.json)
-    active_routers = load_routers()
-    
-    # Fusionner avec les routeurs enregistrés
-    all_routers = {}
-    
-    # 1. Ajouter tous les routeurs actifs
-    for router_id, router_data in active_routers.items():
-        all_routers[router_id] = router_data.copy()
+    if USE_DATABASE:
+        # Utiliser la base de données SQLite
+        all_routers = db_get_all_routers()
         
-        # Si le routeur est dans REGISTERED_ROUTERS, enrichir avec les infos de config
-        if router_id in REGISTERED_ROUTERS:
-            config = REGISTERED_ROUTERS[router_id]
-            all_routers[router_id]["location"] = config.get("location", "Unknown")
-            all_routers[router_id]["registered"] = True
-            # Garder le nom du routeur qui s'est connecté (plus à jour)
-            if "name" not in all_routers[router_id] or not all_routers[router_id]["name"]:
-                all_routers[router_id]["name"] = config.get("name", "Unknown Router")
+        # Enrichir avec les infos de REGISTERED_ROUTERS si disponibles
+        for router_id in REGISTERED_ROUTERS:
+            if router_id in all_routers:
+                config = REGISTERED_ROUTERS[router_id]
+                all_routers[router_id]["registered"] = True
+                # Ne pas écraser les données existantes, juste enrichir
+                if not all_routers[router_id].get("location"):
+                    all_routers[router_id]["location"] = config.get("location", "Unknown")
+        
+        return all_routers
+    else:
+        # Fallback vers l'ancienne méthode avec JSON
+        # Charger l'état volatile (depuis routers.json)
+        active_routers = load_routers()
+        
+        # Fusionner avec les routeurs enregistrés
+        all_routers = {}
+        
+        # 1. Ajouter tous les routeurs actifs
+        for router_id, router_data in active_routers.items():
+            all_routers[router_id] = router_data.copy()
+            
+            # Si le routeur est dans REGISTERED_ROUTERS, enrichir avec les infos de config
+            if router_id in REGISTERED_ROUTERS:
+                config = REGISTERED_ROUTERS[router_id]
+                all_routers[router_id]["location"] = config.get("location", "Unknown")
+                all_routers[router_id]["registered"] = True
+                # Garder le nom du routeur qui s'est connecté (plus à jour)
+                if "name" not in all_routers[router_id] or not all_routers[router_id]["name"]:
+                    all_routers[router_id]["name"] = config.get("name", "Unknown Router")
     
     # 2. Ajouter les routeurs enregistrés qui ne sont pas encore actifs
     for router_id, config in REGISTERED_ROUTERS.items():
@@ -1999,7 +2041,25 @@ def anchor():
             print(f"🆕 Nouveau routeur détecté: {router_name} ({router_id[:16]}...)")
             # Proposer de l'ajouter à REGISTERED_ROUTERS (optionnel, manuel)
         
-        # Mettre à jour le hash local (reçu du routeur)
+        # Préparer les données du routeur
+        router_data_update = {
+            "name": router_name,
+            "public_ip": router_ip,
+            "local_ip": local_ip,
+            "mac_address": router_mac,
+            "total_blocks": total_blocks,
+            "current_hash": snr_hash,
+            "security_status": router_info.get("security_status", "unknown"),
+            "hash_interval": hash_interval,
+            "block_interval": block_interval,
+            "retention_days": retention_days
+        }
+        
+        # Enregistrer/mettre à jour dans la base de données SQLite
+        if USE_DATABASE:
+            add_or_update_router(router_id, router_data_update)
+        
+        # Mettre à jour le hash local (reçu du routeur) pour compatibilité
         router_info["name"] = router_name
         router_info["last_ip"] = router_ip
         router_info["last_seen"] = current_timestamp
@@ -2054,8 +2114,10 @@ def anchor():
                 print(f"   ✅ TXID: {txid}")
                 print(f"   🌐 https://test.whatsonchain.com/tx/{txid}")
                 
-                routers[router_id] = router_info
-                save_routers(routers)
+                # Sauvegarder (déjà fait dans DB)
+                if not USE_DATABASE:
+                    routers[router_id] = router_info
+                    save_routers(routers)
                 
                 return jsonify({
                     "status": "anchored",
@@ -2067,15 +2129,17 @@ def anchor():
                 
             except Exception as anchor_error:
                 print(f"   ❌ Erreur ancrage BSV: {anchor_error}")
-                # Même en cas d'erreur, on sauvegarde le local_hash
-                routers[router_id] = router_info
-                save_routers(routers)
+                # Même en cas d'erreur, on sauvegarde le local_hash (déjà fait dans DB)
+                if not USE_DATABASE:
+                    routers[router_id] = router_info
+                    save_routers(routers)
                 return jsonify({"error": f"Ancrage BSV échoué: {anchor_error}"}), 500
         
         else:
-            # Pas d'ancrage, juste mise à jour local_hash
-            routers[router_id] = router_info
-            save_routers(routers)
+            # Pas d'ancrage, juste mise à jour local_hash (déjà fait dans DB)
+            if not USE_DATABASE:
+                routers[router_id] = router_info
+                save_routers(routers)
             
             next_anchor_in = BSV_ANCHOR_INTERVAL - time_since_anchor
             
