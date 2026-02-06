@@ -1364,6 +1364,26 @@ def dashboard():
     )
 
 
+@app.route('/trigger-forensic/<router_id>', methods=['POST'])
+def trigger_forensic(router_id):
+    """Déclenche l'envoi des données forensiques depuis le routeur"""
+    routers = load_routers()
+    router_info = routers.get(router_id)
+    
+    if not router_info:
+        return jsonify({"status": "error", "message": "Router not found"}), 404
+    
+    # Pour l'instant, on retourne un message indiquant que le routeur doit
+    # exécuter le script manuellement ou automatiquement
+    # Plus tard: on pourra déclencher via SSH ou message queue
+    
+    return jsonify({
+        "status": "triggered",
+        "message": "Le routeur doit exécuter: /root/snr_send_full_logs.sh",
+        "router_id": router_id
+    })
+
+
 @app.route('/audit/<router_id>')
 def audit(router_id):
     """Page d'audit détaillée pour un routeur"""
@@ -1446,6 +1466,265 @@ def explorer(router_id):
         first_seen=first_seen,
         anchors=formatted_anchors
     )
+
+
+@app.route('/forensics', methods=['POST'])
+def receive_forensics():
+    """Reçoit les données forensiques complètes du routeur lors d'une breach"""
+    try:
+        data = request.get_json() or {}
+        
+        router_id = data.get('router_id', 'unknown')
+        forensic_type = data.get('forensic_type', 'unknown')
+        timestamp = data.get('timestamp', int(datetime.now().timestamp()))
+        
+        # Créer un ID forensique unique
+        forensic_id = f"{router_id}-{timestamp}"
+        
+        # Sauvegarder les données forensiques
+        forensics_dir = DATA_DIR / "forensics"
+        forensics_dir.mkdir(exist_ok=True)
+        
+        forensic_file = forensics_dir / f"{forensic_id}.json"
+        forensic_file.write_text(json.dumps(data, indent=2))
+        
+        print(f"🔍 Données forensiques reçues: {router_id}")
+        print(f"   Type: {forensic_type}")
+        print(f"   Blocks: {len(data.get('blocks', []))}")
+        print(f"   Fichier: {forensic_file.name}")
+        
+        return jsonify({
+            "status": "success",
+            "forensic_id": forensic_id,
+            "message": "Données forensiques sauvegardées",
+            "analysis_url": f"/forensics/{forensic_id}"
+        })
+        
+    except Exception as e:
+        print(f"❌ Erreur forensics: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/forensics/<forensic_id>')
+def view_forensics(forensic_id):
+    """Affiche l'analyse forensique détaillée"""
+    forensic_file = DATA_DIR / "forensics" / f"{forensic_id}.json"
+    
+    if not forensic_file.exists():
+        return "Forensic data not found", 404
+    
+    data = json.loads(forensic_file.read_text())
+    
+    # Analyser les données
+    blocks = data.get('blocks', [])
+    total_blocks = len(blocks)
+    
+    # Détecter les anomalies dans la chaîne
+    anomalies = []
+    for i in range(1, len(blocks)):
+        prev_block = blocks[i-1]
+        curr_block = blocks[i]
+        
+        # Vérifier si PREV du block actuel = CHAIN du block précédent
+        if curr_block.get('prev_hash') != prev_block.get('chain_hash'):
+            anomalies.append({
+                'block_index': i,
+                'type': 'chain_break',
+                'message': f"Block #{i}: PREV hash ne correspond pas au CHAIN précédent",
+                'timestamp': curr_block.get('timestamp'),
+                'expected': prev_block.get('chain_hash'),
+                'actual': curr_block.get('prev_hash')
+            })
+    
+    # HTML pour l'affichage
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>SNR Forensics - {forensic_id}</title>
+        <meta charset="utf-8">
+        <style>
+            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+            body {{
+                font-family: 'Courier New', monospace;
+                background: #1a1a1a;
+                color: #0f0;
+                padding: 20px;
+            }}
+            .container {{
+                max-width: 1400px;
+                margin: 0 auto;
+                background: #000;
+                border: 2px solid #0f0;
+                border-radius: 10px;
+                padding: 30px;
+            }}
+            h1 {{
+                color: #ff6600;
+                margin-bottom: 20px;
+                text-shadow: 0 0 10px #ff6600;
+            }}
+            h2 {{
+                color: #0ff;
+                margin-top: 30px;
+                margin-bottom: 15px;
+            }}
+            .info-grid {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+                gap: 15px;
+                margin-bottom: 30px;
+            }}
+            .info-box {{
+                background: #111;
+                border: 1px solid #0f0;
+                padding: 15px;
+                border-radius: 5px;
+            }}
+            .info-label {{
+                color: #888;
+                font-size: 12px;
+                margin-bottom: 5px;
+            }}
+            .info-value {{
+                color: #0f0;
+                font-size: 14px;
+                word-break: break-all;
+            }}
+            .anomaly {{
+                background: #300;
+                border: 2px solid #f00;
+                padding: 20px;
+                margin: 15px 0;
+                border-radius: 5px;
+            }}
+            .anomaly-title {{
+                color: #f00;
+                font-size: 18px;
+                margin-bottom: 10px;
+                font-weight: bold;
+            }}
+            .blocks-table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 20px;
+            }}
+            .blocks-table th {{
+                background: #0f0;
+                color: #000;
+                padding: 10px;
+                text-align: left;
+            }}
+            .blocks-table td {{
+                border-bottom: 1px solid #333;
+                padding: 8px;
+                font-size: 11px;
+            }}
+            .blocks-table tr:hover {{
+                background: #111;
+            }}
+            .hash {{
+                font-family: monospace;
+                color: #0ff;
+            }}
+            .btn {{
+                display: inline-block;
+                background: #ff6600;
+                color: #000;
+                padding: 10px 20px;
+                text-decoration: none;
+                border-radius: 5px;
+                margin-top: 20px;
+                font-weight: bold;
+            }}
+            .btn:hover {{
+                background: #ff8800;
+            }}
+            .status-ok {{ color: #0f0; }}
+            .status-breach {{ color: #f00; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🔍 SNR FORENSIC ANALYSIS</h1>
+            <p>Forensic ID: <span class="hash">{forensic_id}</span></p>
+            
+            <h2>📊 Summary</h2>
+            <div class="info-grid">
+                <div class="info-box">
+                    <div class="info-label">Router ID</div>
+                    <div class="info-value">{data.get('router_id')}</div>
+                </div>
+                <div class="info-box">
+                    <div class="info-label">Public IP</div>
+                    <div class="info-value">{data.get('network_info', {}).get('public_ip')}</div>
+                </div>
+                <div class="info-box">
+                    <div class="info-label">MAC Address</div>
+                    <div class="info-value">{data.get('network_info', {}).get('mac_address')}</div>
+                </div>
+                <div class="info-box">
+                    <div class="info-label">Total Blocks</div>
+                    <div class="info-value">{total_blocks}</div>
+                </div>
+                <div class="info-box">
+                    <div class="info-label">Log Size</div>
+                    <div class="info-value">{data.get('log_size')}</div>
+                </div>
+                <div class="info-box">
+                    <div class="info-label">Analysis Time</div>
+                    <div class="info-value">{datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")}</div>
+                </div>
+            </div>
+            
+            <h2>🚨 Anomalies Detected: {len(anomalies)}</h2>
+            {''.join([f'''
+            <div class="anomaly">
+                <div class="anomaly-title">❌ {a['type'].upper()} - Block #{a['block_index']}</div>
+                <div>{a['message']}</div>
+                <div style="margin-top: 10px; color: #888;">Timestamp: {a['timestamp']}</div>
+                <div style="margin-top: 10px;">
+                    <div>Expected PREV: <span class="hash">{a['expected'][:32]}...</span></div>
+                    <div>Actual PREV: <span class="hash">{a['actual'][:32]}...</span></div>
+                </div>
+            </div>
+            ''' for a in anomalies]) if anomalies else '<p class="status-ok">✅ No anomalies detected in chain integrity</p>'}
+            
+            <h2>📋 Complete Block History ({total_blocks} blocks)</h2>
+            <table class="blocks-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Timestamp</th>
+                        <th>LOGS Hash</th>
+                        <th>PREV Hash</th>
+                        <th>CHAIN Hash</th>
+                        <th>GLOBAL Hash</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {''.join([f'''
+                    <tr>
+                        <td>{i}</td>
+                        <td>{block.get('timestamp', 'N/A')}</td>
+                        <td class="hash">{block.get('logs_hash', 'N/A')[:16]}...</td>
+                        <td class="hash">{block.get('prev_hash', 'N/A')[:16]}...</td>
+                        <td class="hash">{block.get('chain_hash', 'N/A')[:16]}...</td>
+                        <td class="hash">{block.get('global_hash', 'N/A')[:16]}...</td>
+                    </tr>
+                    ''' for i, block in enumerate(blocks)])}
+                </tbody>
+            </table>
+            
+            <a href="/" class="btn">← Back to Dashboard</a>
+        </div>
+    </body>
+    </html>
+    """
+    
+    return html
 
 
 @app.route('/health', methods=['GET'])

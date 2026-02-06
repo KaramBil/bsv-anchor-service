@@ -376,9 +376,54 @@
             
             <!-- Actions -->
             <div class="audit-actions">
+                <button onclick="requestForensicData()" class="btn btn-primary" id="forensicBtn">
+                    🔍 Demander Analyse Complète
+                </button>
                 <a href="/explorer/{{ device_id }}" class="btn btn-primary">📊 Voir BSV Explorer</a>
                 <a href="http://{{ local_ip }}/Advanced_SNR_Content.asp" class="btn btn-secondary" target="_blank">🔧 Accéder au Routeur</a>
             </div>
+            
+            <div id="forensicStatus" style="display: none; margin-top: 20px; padding: 20px; background: #e7f3ff; border-radius: 10px; text-align: center;">
+                <p id="forensicMessage"></p>
+            </div>
+            
+            <script>
+            function requestForensicData() {
+                const btn = document.getElementById('forensicBtn');
+                const status = document.getElementById('forensicStatus');
+                const message = document.getElementById('forensicMessage');
+                
+                btn.disabled = true;
+                btn.textContent = '⏳ En cours...';
+                status.style.display = 'block';
+                message.innerHTML = '🔄 Demande d\'analyse forensique envoyée au routeur...<br>Cela peut prendre quelques secondes.';
+                
+                // Demander au routeur d'envoyer ses logs
+                fetch('/trigger-forensic/{{ device_id }}', {
+                    method: 'POST'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success' || data.status === 'triggered') {
+                        message.innerHTML = '✅ Demande envoyée au routeur!<br>Les données forensiques seront disponibles dans quelques secondes.';
+                        
+                        // Attendre un peu puis recharger
+                        setTimeout(() => {
+                            window.location.reload();
+                        }, 3000);
+                    } else {
+                        message.innerHTML = '❌ Erreur: ' + (data.message || 'Impossible de contacter le routeur');
+                        btn.disabled = false;
+                        btn.textContent = '🔍 Réessayer';
+                    }
+                })
+                .catch(error => {
+                    message.innerHTML = '❌ Erreur de communication: ' + error.message;
+                    btn.disabled = false;
+                    btn.textContent = '🔍 Réessayer';
+                });
+            }
+            </script>
         </div>
     </div>
 </body>
