@@ -555,6 +555,59 @@ GRIPID_DASHBOARD_HTML = """
             font-weight: 600;
         }
         
+        /* SNR Configuration Section */
+        .snr-config-section {
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+            border: 2px solid var(--gripid-orange);
+        }
+        
+        .config-header {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--gripid-orange);
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .config-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 12px;
+        }
+        
+        .config-item {
+            background: white;
+            padding: 12px;
+            border-radius: 8px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            transition: transform 0.2s;
+        }
+        
+        .config-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(255, 107, 53, 0.2);
+        }
+        
+        .config-label {
+            font-size: 10px;
+            color: #888;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+        
+        .config-value {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--gripid-orange);
+        }
+        
         /* Buttons */
         .btn-gripid {
             display: inline-block;
@@ -860,6 +913,29 @@ GRIPID_DASHBOARD_HTML = """
                         <div class="info-item">
                             <div class="info-label">IP Address</div>
                             <div class="info-value">{{ device.ip }}</div>
+                        </div>
+                    </div>
+                    
+                    <!-- SNR Configuration -->
+                    <div class="snr-config-section">
+                        <div class="config-header">⚙️ SNR Configuration</div>
+                        <div class="config-grid">
+                            <div class="config-item">
+                                <div class="config-label">Hashing Interval</div>
+                                <div class="config-value">{{ device.hash_interval | default('10') }}s</div>
+                            </div>
+                            <div class="config-item">
+                                <div class="config-label">Block Generation</div>
+                                <div class="config-value">{{ device.block_interval | default('30') }}s</div>
+                            </div>
+                            <div class="config-item">
+                                <div class="config-label">Log Retention</div>
+                                <div class="config-value">{{ device.retention_days | default('3') }} days</div>
+                            </div>
+                            <div class="config-item">
+                                <div class="config-label">Total Blocks</div>
+                                <div class="config-value">{{ device.total_blocks | default('0') }}</div>
+                            </div>
                         </div>
                     </div>
                     
@@ -1266,7 +1342,11 @@ def dashboard():
             "security_badge": security_badge,
             "local_hash": security["local_hash"] or "N/A",
             "blockchain_hash": security["blockchain_hash"] or "N/A",
-            "match_message": match_msg
+            "match_message": match_msg,
+            "hash_interval": router_info.get("hash_interval", 10),
+            "block_interval": router_info.get("block_interval", 30),
+            "retention_days": router_info.get("retention_days", 3),
+            "total_blocks": router_info.get("total_blocks", 0)
         })
     
     return render_template_string(
@@ -1342,6 +1422,12 @@ def anchor():
         router_name = data.get('router_name', "GTEN Router")
         blocks_count = data.get('blocks_count', 0)
         
+        # Paramètres de configuration SNR (nouveaux)
+        hash_interval = data.get('hash_interval', 10)
+        block_interval = data.get('block_interval', 30)
+        retention_days = data.get('retention_days', 3)
+        total_blocks = data.get('total_blocks', 0)
+        
         if not snr_hash:
             return jsonify({"error": "hash manquant"}), 400
         
@@ -1356,6 +1442,12 @@ def anchor():
         router_info["last_ip"] = router_ip
         router_info["last_seen"] = current_timestamp
         router_info["local_hash"] = snr_hash  # Hash actuel du routeur
+        
+        # Stocker les paramètres de configuration SNR
+        router_info["hash_interval"] = hash_interval
+        router_info["block_interval"] = block_interval
+        router_info["retention_days"] = retention_days
+        router_info["total_blocks"] = total_blocks
         
         # Déterminer si on doit ancrer sur BSV
         last_anchor_time = router_info.get("last_anchor_time", 0)
@@ -1483,7 +1575,11 @@ def get_devices():
             "security_status": security["status"],
             "local_hash": security["local_hash"],
             "blockchain_hash": security["blockchain_hash"],
-            "hash_match": security["match"]
+            "hash_match": security["match"],
+            "hash_interval": router_info.get("hash_interval", 10),
+            "block_interval": router_info.get("block_interval", 30),
+            "retention_days": router_info.get("retention_days", 3),
+            "total_blocks": router_info.get("total_blocks", 0)
         })
     
     return jsonify({"devices": devices})
