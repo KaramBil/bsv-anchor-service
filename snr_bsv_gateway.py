@@ -19,10 +19,13 @@ from flask import Flask, request, jsonify, render_template_string, redirect
 BSV_TESTNET_WIF = os.getenv("BSV_TESTNET_WIF", "cVEVNHpneqzMrghQPhxy6JLcRB2Czgjr9Fg9XWfDdh9ac9Te1mTh")
 ADMIN_ADDRESS = "msPsaYnrUJEwu3uRJQ4WmR7xnzCJWkLrjK"
 
-# Intervalle d'ancrage BSV (en secondes)
-# Le cloud reçoit les hashs toutes les 10s mais ancre sur BSV moins fréquemment
+# Configuration des intervalles
+# Le routeur envoie ses hashs toutes les 30s (SNR_BLOCK_GENERATION)
+# Le cloud ancre sur BSV moins fréquemment (toutes les heures)
 # Cela crée une fenêtre de détection pour les modifications de logs
-BSV_ANCHOR_INTERVAL = int(os.getenv("BSV_ANCHOR_INTERVAL", "3600"))  # 1 heure par défaut
+ROUTER_SEND_INTERVAL = int(os.getenv("ROUTER_SEND_INTERVAL", "30"))      # Routeur envoie toutes les 30s
+BSV_ANCHOR_INTERVAL = int(os.getenv("BSV_ANCHOR_INTERVAL", "3600"))      # Ancrage BSV toutes les 1h
+OFFLINE_TIMEOUT = ROUTER_SEND_INTERVAL * 2                               # Offline après 2x l'intervalle d'envoi (60s)
 
 # Ajouter le projet gripid au path (si en local)
 BSV_PROJECT = Path("/home/karam/Bureau/SNR/bsv/gripid_bsv_chain")
@@ -93,19 +96,27 @@ def get_router_stats(router_id):
 
 
 def get_connection_status(last_seen_timestamp):
-    """Détermine l'état de connexion du routeur"""
+    """
+    Détermine l'état de connexion du routeur
+    Basé sur ROUTER_SEND_INTERVAL (30s par défaut)
+    - online: < 40s (intervalle + 10s de marge)
+    - waiting: 40-60s
+    - offline: > 60s (2x l'intervalle)
+    """
     if not last_seen_timestamp:
         return "offline"
     
     current_time = int(datetime.now().timestamp())
     time_diff = current_time - last_seen_timestamp
     
-    if time_diff <= 11:
-        return "online"      # Moins de 11 secondes: Online
-    elif time_diff <= 20:
-        return "waiting"     # Entre 11 et 20 secondes: Waiting
+    # Online si dernière mise à jour < (intervalle + 10s de marge)
+    # Routeur envoie toutes les 30s, donc online si < 40s
+    if time_diff <= (ROUTER_SEND_INTERVAL + 10):
+        return "online"      # < 40s: Online
+    elif time_diff <= OFFLINE_TIMEOUT:
+        return "waiting"     # Entre 40s et 60s: Waiting
     else:
-        return "offline"     # Plus de 20 secondes: Offline
+        return "offline"     # > 60s: Offline
 
 
 def get_security_status(router_id):
@@ -2110,6 +2121,11 @@ if __name__ == "__main__":
     
     if wallet['balance_satoshis'] < 5000:
         print(f"\n   ⚠️  Solde faible! Recharge: https://faucet.bitcoincloud.net/")
+    
+    print(f"\n🔧 Configuration:")
+    print(f"   Router Send Interval: {ROUTER_SEND_INTERVAL}s")
+    print(f"   BSV Anchor Interval: {BSV_ANCHOR_INTERVAL}s ({BSV_ANCHOR_INTERVAL//60} min)")
+    print(f"   Offline Timeout: {OFFLINE_TIMEOUT}s")
     
     print(f"\n📡 Endpoints:")
     print(f"   Dashboard: http://localhost:5000/")
