@@ -106,6 +106,10 @@ ANCHORS_FILE = DATA_DIR / "anchors.json"
 ROUTERS_FILE = DATA_DIR / "routers.json"
 FORENSICS_FILE = DATA_DIR / "forensics.json"
 FORENSIC_REQUESTS_FILE = DATA_DIR / "forensic_requests.json"
+FORENSIC_RESPONSES_FILE = DATA_DIR / "forensic_responses.json"
+
+# Mot de passe par défaut pour l'agent forensique (à changer en production!)
+FORENSIC_AGENT_PASSWORD = os.getenv("FORENSIC_AGENT_PASSWORD", "GripID2026Forensic")
 
 
 # ============================================================================
@@ -176,6 +180,24 @@ def save_forensic_requests(requests):
         FORENSIC_REQUESTS_FILE.write_text(json.dumps(requests, indent=2))
     except Exception as e:
         print(f"❌ Erreur sauvegarde forensic requests: {e}")
+
+
+def load_forensic_responses():
+    """Charge les réponses forensiques depuis le fichier JSON"""
+    if not FORENSIC_RESPONSES_FILE.exists():
+        return {}
+    try:
+        return json.loads(FORENSIC_RESPONSES_FILE.read_text())
+    except:
+        return {}
+
+
+def save_forensic_responses(responses):
+    """Sauvegarde les réponses forensiques dans le fichier JSON"""
+    try:
+        FORENSIC_RESPONSES_FILE.write_text(json.dumps(responses, indent=2))
+    except Exception as e:
+        print(f"❌ Erreur sauvegarde forensic responses: {e}")
 
 
 def save_routers(routers):
@@ -1765,8 +1787,18 @@ def forensic_request(router_id):
         return jsonify({"has_request": False})
     
     elif request.method == 'POST':
-        # L'admin crée une nouvelle requête forensique
+        # L'admin crée une nouvelle requête forensique avec authentification
         import time
+        data = request.get_json() or {}
+        agent_password = data.get('agent_password', '')
+        
+        # Vérifier le mot de passe agent
+        if agent_password != FORENSIC_AGENT_PASSWORD:
+            return jsonify({
+                "status": "error",
+                "message": "Mot de passe agent incorrect"
+            }), 403
+        
         request_id = f"FR-{router_id}-{int(time.time())}"
         
         requests[router_id] = {
@@ -1774,7 +1806,8 @@ def forensic_request(router_id):
             "router_id": router_id,
             "status": "pending",
             "created_at": int(time.time()),
-            "created_by": "admin"
+            "created_by": "admin",
+            "agent_password": agent_password  # Transmis au routeur pour vérification
         }
         
         save_forensic_requests(requests)
@@ -1784,7 +1817,7 @@ def forensic_request(router_id):
         return jsonify({
             "status": "success",
             "request_id": request_id,
-            "message": "Requête forensique créée. Le routeur enverra ses logs sous peu."
+            "message": "Requête forensique créée. Le routeur répondra sous peu."
         })
     
     elif request.method == 'DELETE':
@@ -1797,15 +1830,62 @@ def forensic_request(router_id):
         return jsonify({"status": "error", "message": "Request not found"}), 404
 
 
+@app.route('/api/forensic-response/<router_id>', methods=['POST'])
+def forensic_response(router_id):
+    """Reçoit la réponse du routeur à une requête forensique"""
+    try:
+        data = request.get_json() or {}
+        
+        response_status = data.get('status', 'unknown')
+        reason = data.get('reason', '')
+        message = data.get('message', '')
+        request_id = data.get('request_id', '')
+        
+        responses = load_forensic_responses()
+        
+        responses[router_id] = {
+            "router_id": router_id,
+            "request_id": request_id,
+            "status": response_status,
+            "reason": reason,
+            "message": message,
+            "timestamp": int(datetime.now().timestamp())
+        }
+        
+        save_forensic_responses(responses)
+        
+        print(f"📥 Réponse forensique reçue: {router_id}")
+        print(f"   Status: {response_status}")
+        print(f"   Reason: {reason}")
+        print(f"   Message: {message}")
+        
+        return jsonify({"status": "success", "message": "Response received"})
+        
+    except Exception as e:
+        print(f"❌ Erreur forensic response: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/request-forensic-analysis/<router_id>', methods=['POST'])
 def request_forensic_analysis(router_id):
-    """Déclenche l'analyse forensique en demandant au routeur d'envoyer tous ses logs"""
+    """Déclenche l'analyse forensique en demandant au routeur d'envoyer tous ses logs (avec mot de passe)"""
     import time
     
     routers = load_routers()
     
     if router_id not in routers:
         return jsonify({"status": "error", "message": "Router not found"}), 404
+    
+    # Récupérer le mot de passe agent depuis la requête
+    data = request.get_json() or {}
+    agent_password = data.get('agent_password', '')
+    
+    # Vérifier le mot de passe agent
+    if agent_password != FORENSIC_AGENT_PASSWORD:
+        return jsonify({
+            "status": "error",
+            "message": "Mot de passe agent incorrect"
+        }), 403
     
     # Vérifier si on a déjà des données forensiques récentes (moins de 2 minutes)
     forensics = load_forensics()
@@ -1825,7 +1905,7 @@ def request_forensic_analysis(router_id):
             "forensic_id": recent_forensics[-1]  # Le plus récent
         })
     
-    # Créer une requête forensique on-demand
+    # Créer une requête forensique on-demand avec le mot de passe
     requests = load_forensic_requests()
     request_id = f"FR-{router_id}-{int(time.time())}"
     
@@ -1834,7 +1914,8 @@ def request_forensic_analysis(router_id):
         "router_id": router_id,
         "status": "pending",
         "created_at": int(time.time()),
-        "created_by": "admin"
+        "created_by": "admin",
+        "agent_password": agent_password
     }
     
     save_forensic_requests(requests)
@@ -1842,7 +1923,7 @@ def request_forensic_analysis(router_id):
     return jsonify({
         "status": "pending",
         "request_id": request_id,
-        "message": "Request sent to router, waiting for data..."
+        "message": "Request sent to router, waiting for response..."
     })
 
 
