@@ -16,21 +16,35 @@ from pathlib import Path
 from flask import Flask, request, jsonify, render_template_string, redirect
 
 # Import du module database SQLite
+USE_DATABASE = False  # Désactivé par défaut, activer via variable ENABLE_DATABASE
 try:
-    from database import (
-        init_db,
-        add_or_update_router,
-        get_all_routers as db_get_all_routers,
-        get_router,
-        update_router_status,
-        get_router_history
-    )
-    USE_DATABASE = True
-    print("✅ Module database SQLite chargé")
+    if os.getenv("ENABLE_DATABASE", "False").lower() == "true":
+        from database import (
+            init_db,
+            add_or_update_router,
+            get_all_routers as db_get_all_routers,
+            get_router,
+            update_router_status,
+            get_router_history
+        )
+        try:
+            init_db()
+            USE_DATABASE = True
+            print("✅ Base de données SQLite activée et initialisée")
+        except Exception as db_init_error:
+            print(f"⚠️  Erreur initialisation DB: {db_init_error}")
+            USE_DATABASE = False
+    else:
+        print("ℹ️  Base de données désactivée (set ENABLE_DATABASE=true pour activer)")
 except ImportError as e:
     print(f"⚠️  Module database non disponible: {e}")
-    print("   Utilisation des fichiers JSON")
-    USE_DATABASE = False
+except Exception as e:
+    print(f"❌ Erreur inattendue database: {e}")
+finally:
+    if USE_DATABASE:
+        print("   → Mode: SQLite Database")
+    else:
+        print("   → Mode: JSON Files")
 
 # Configuration
 BSV_TESTNET_WIF = os.getenv("BSV_TESTNET_WIF", "cVEVNHpneqzMrghQPhxy6JLcRB2Czgjr9Fg9XWfDdh9ac9Te1mTh")
