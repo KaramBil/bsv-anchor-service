@@ -1887,6 +1887,13 @@ def get_anchors():
     })
 
 
+@app.route('/api/security-status/<router_id>', methods=['GET'])
+def api_security_status_router(router_id):
+    """API pour que le routeur vérifie son propre statut de sécurité"""
+    security = get_security_status(router_id)
+    return jsonify(security)
+
+
 @app.route('/api/devices', methods=['GET'])
 def get_devices():
     """Liste des devices avec statut de sécurité et connexion"""
