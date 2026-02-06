@@ -15,37 +15,6 @@ from datetime import datetime
 from pathlib import Path
 from flask import Flask, request, jsonify, render_template_string, redirect
 
-# Import du module database SQLite
-USE_DATABASE = False  # Désactivé par défaut, activer via variable ENABLE_DATABASE
-try:
-    if os.getenv("ENABLE_DATABASE", "False").lower() == "true":
-        from database import (
-            init_db,
-            add_or_update_router,
-            get_all_routers as db_get_all_routers,
-            get_router,
-            update_router_status,
-            get_router_history
-        )
-        try:
-            init_db()
-            USE_DATABASE = True
-            print("✅ Base de données SQLite activée et initialisée")
-        except Exception as db_init_error:
-            print(f"⚠️  Erreur initialisation DB: {db_init_error}")
-            USE_DATABASE = False
-    else:
-        print("ℹ️  Base de données désactivée (set ENABLE_DATABASE=true pour activer)")
-except ImportError as e:
-    print(f"⚠️  Module database non disponible: {e}")
-except Exception as e:
-    print(f"❌ Erreur inattendue database: {e}")
-finally:
-    if USE_DATABASE:
-        print("   → Mode: SQLite Database")
-    else:
-        print("   → Mode: JSON Files")
-
 # Configuration
 BSV_TESTNET_WIF = os.getenv("BSV_TESTNET_WIF", "cVEVNHpneqzMrghQPhxy6JLcRB2Czgjr9Fg9XWfDdh9ac9Te1mTh")
 ADMIN_ADDRESS = "msPsaYnrUJEwu3uRJQ4WmR7xnzCJWkLrjK"
@@ -104,7 +73,6 @@ DATA_DIR = Path(__file__).parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
 ANCHORS_FILE = DATA_DIR / "anchors.json"
 ROUTERS_FILE = DATA_DIR / "routers.json"
-FORENSICS_FILE = DATA_DIR / "forensics.json"
 
 
 # ============================================================================
@@ -128,89 +96,46 @@ def save_anchors(anchors):
 
 def load_routers():
     """Charge les infos des routeurs"""
-    if USE_DATABASE:
-        # Utiliser la base de données SQLite
-        return db_get_all_routers()
-    else:
-        # Fallback vers fichiers JSON
-        if not ROUTERS_FILE.exists():
-            return {}
-        try:
-            return json.loads(ROUTERS_FILE.read_text())
-        except:
-            return {}
-
-
-def load_forensics():
-    """Charge tous les forensics depuis le fichier JSON"""
-    if not FORENSICS_FILE.exists():
+    if not ROUTERS_FILE.exists():
         return {}
     try:
-        return json.loads(FORENSICS_FILE.read_text())
+        return json.loads(ROUTERS_FILE.read_text())
     except:
         return {}
 
 
-def save_forensics(forensics):
-    """Sauvegarde tous les forensics dans le fichier JSON"""
-    try:
-        FORENSICS_FILE.write_text(json.dumps(forensics, indent=2))
-    except Exception as e:
-        print(f"❌ Erreur sauvegarde forensics: {e}")
-
-
 def save_routers(routers):
     """Sauvegarde les infos des routeurs"""
-    if USE_DATABASE:
-        # Pas besoin de sauvegarder manuellement avec SQLite
-        # Les données sont déjà persistées dans add_or_update_router()
-        pass
-    else:
-        # Fallback vers fichiers JSON
-        ROUTERS_FILE.write_text(json.dumps(routers, indent=2))
+    ROUTERS_FILE.write_text(json.dumps(routers, indent=2))
 
 
 def get_all_routers():
     """
-    Récupère tous les routeurs : depuis la base de données SQLite
+    Récupère tous les routeurs : enregistrés (persistants) + actifs (volatiles)
     
-    Avec SQLite, tous les routeurs sont persistés automatiquement.
-    Plus besoin de "pinned routers" - tout est dans la DB !
+    Les routeurs dans REGISTERED_ROUTERS sont toujours visibles sur le dashboard,
+    même après un redéploiement Render, avec le statut "inactive" par défaut.
+    
+    Dès qu'un routeur envoie des données, il passe automatiquement à "active".
     """
-    if USE_DATABASE:
-        # Utiliser la base de données SQLite
-        all_routers = db_get_all_routers()
+    # Charger l'état volatile (depuis routers.json)
+    active_routers = load_routers()
+    
+    # Fusionner avec les routeurs enregistrés
+    all_routers = {}
+    
+    # 1. Ajouter tous les routeurs actifs
+    for router_id, router_data in active_routers.items():
+        all_routers[router_id] = router_data.copy()
         
-        # Enrichir avec les infos de REGISTERED_ROUTERS si disponibles
-        for router_id in REGISTERED_ROUTERS:
-            if router_id in all_routers:
-                config = REGISTERED_ROUTERS[router_id]
-                all_routers[router_id]["registered"] = True
-                # Ne pas écraser les données existantes, juste enrichir
-                if not all_routers[router_id].get("location"):
-                    all_routers[router_id]["location"] = config.get("location", "Unknown")
-        
-        return all_routers
-    else:
-        # Fallback vers l'ancienne méthode avec JSON
-        # Charger l'état volatile (depuis routers.json)
-        active_routers = load_routers()
-        
-        # Fusionner avec les routeurs enregistrés
-        all_routers = {}
-        
-        # 1. Ajouter tous les routeurs actifs
-        for router_id, router_data in active_routers.items():
-            all_routers[router_id] = router_data.copy()
-            
-            # Si le routeur est dans REGISTERED_ROUTERS, enrichir avec les infos de config
-            if router_id in REGISTERED_ROUTERS:
-                config = REGISTERED_ROUTERS[router_id]
-                all_routers[router_id]["location"] = config.get("location", "Unknown")
-                all_routers[router_id]["registered"] = True
-                # Garder le nom du routeur qui s'est connecté (plus à jour)
-                if "name" not in all_routers[router_id] or not all_routers[router_id]["name"]:
-                    all_routers[router_id]["name"] = config.get("name", "Unknown Router")
+        # Si le routeur est dans REGISTERED_ROUTERS, enrichir avec les infos de config
+        if router_id in REGISTERED_ROUTERS:
+            config = REGISTERED_ROUTERS[router_id]
+            all_routers[router_id]["location"] = config.get("location", "Unknown")
+            all_routers[router_id]["registered"] = True
+            # Garder le nom du routeur qui s'est connecté (plus à jour)
+            if "name" not in all_routers[router_id] or not all_routers[router_id]["name"]:
+                all_routers[router_id]["name"] = config.get("name", "Unknown Router")
     
     # 2. Ajouter les routeurs enregistrés qui ne sont pas encore actifs
     for router_id, config in REGISTERED_ROUTERS.items():
@@ -1667,26 +1592,17 @@ def receive_forensics():
         # Créer un ID forensique unique
         forensic_id = f"{router_id}-{timestamp}"
         
-        # Charger tous les forensics
-        forensics = load_forensics()
+        # Sauvegarder les données forensiques
+        forensics_dir = DATA_DIR / "forensics"
+        forensics_dir.mkdir(exist_ok=True)
         
-        # Ajouter les nouvelles données forensiques
-        forensics[forensic_id] = {
-            "forensic_id": forensic_id,
-            "router_id": router_id,
-            "forensic_type": forensic_type,
-            "timestamp": timestamp,
-            "received_at": int(datetime.now().timestamp()),
-            "data": data
-        }
-        
-        # Sauvegarder
-        save_forensics(forensics)
+        forensic_file = forensics_dir / f"{forensic_id}.json"
+        forensic_file.write_text(json.dumps(data, indent=2))
         
         print(f"🔍 Données forensiques reçues: {router_id}")
         print(f"   Type: {forensic_type}")
         print(f"   Blocks: {len(data.get('blocks', []))}")
-        print(f"   ID: {forensic_id}")
+        print(f"   Fichier: {forensic_file.name}")
         
         return jsonify({
             "status": "success",
@@ -1705,6 +1621,7 @@ def receive_forensics():
 @app.route('/request-forensic-analysis/<router_id>', methods=['POST'])
 def request_forensic_analysis(router_id):
     """Déclenche l'analyse forensique en demandant au routeur d'envoyer tous ses logs"""
+    import subprocess
     import time
     
     routers = load_routers()
@@ -1713,69 +1630,64 @@ def request_forensic_analysis(router_id):
         return jsonify({"status": "error", "message": "Router not found"}), 404
     
     router_info = routers[router_id]
+    router_ip = router_info.get('last_ip', '')
     
     # Vérifier si on a déjà des données forensiques récentes (moins de 2 minutes)
-    forensics = load_forensics()
-    recent_forensics = []
-    current_time = int(time.time())
+    forensic_file = DATA_DIR / "forensics" / f"{router_id}.json"
+    if forensic_file.exists():
+        file_age = time.time() - forensic_file.stat().st_mtime
+        if file_age < 120:  # 2 minutes
+            return jsonify({
+                "status": "success",
+                "message": "Forensic data already available",
+                "forensic_id": router_id
+            })
     
-    for fid, fdata in forensics.items():
-        if fdata.get("router_id") == router_id:
-            received_at = fdata.get("received_at", 0)
-            if current_time - received_at < 120:  # 2 minutes
-                recent_forensics.append(fid)
+    if not router_ip or router_ip == 'N/A':
+        return jsonify({"status": "error", "message": "Router IP not available"}), 400
     
-    if recent_forensics:
-        return jsonify({
-            "status": "success",
-            "message": "Forensic data already available",
-            "forensic_id": recent_forensics[-1]  # Le plus récent
-        })
-    
-    # On ne peut pas déclencher l'analyse depuis Render (pas d'accès SSH au routeur)
-    # On retourne un message demandant à l'utilisateur de déclencher manuellement
-    return jsonify({
-        "status": "pending",
-        "message": "Request sent to router, waiting for data...",
-        "note": "Le routeur enverra automatiquement les données forensiques lors de la prochaine détection de breach."
-    })
-
-
-@app.route('/api/forensics/<forensic_id>')
-def api_get_forensics(forensic_id):
-    """API pour récupérer les données forensiques en JSON"""
     try:
-        forensics = load_forensics()
+        # Envoyer la commande au routeur pour qu'il envoie ses logs
+        result = subprocess.run(
+            ['ssh', '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=5',
+             f'root@{router_ip}', 'nohup /root/snr_send_full_logs.sh > /dev/null 2>&1 &'],
+            capture_output=True,
+            timeout=10,
+            text=True
+        )
         
-        if forensic_id not in forensics:
-            return jsonify({"error": "Forensic data not found"}), 404
+        # Attendre que le routeur envoie les données (max 5 secondes)
+        for _ in range(10):
+            time.sleep(0.5)
+            if forensic_file.exists() and time.time() - forensic_file.stat().st_mtime < 5:
+                return jsonify({
+                    "status": "success",
+                    "message": "Forensic analysis complete",
+                    "forensic_id": router_id
+                })
         
-        forensic_data = forensics[forensic_id]
-        return jsonify(forensic_data.get("data", {}))
-        
+        return jsonify({
+            "status": "pending",
+            "message": "Request sent to router, waiting for data..."
+        })
+            
     except Exception as e:
-        print(f"❌ Erreur API forensics: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        print(f"Error triggering forensic: {e}")
+        return jsonify({
+            "status": "error",
+            "message": f"Cannot connect to router: {str(e)}"
+        }), 500
 
 
 @app.route('/forensics/<forensic_id>')
 def view_forensics(forensic_id):
     """Affiche l'analyse forensique détaillée avec highlighting des blocks cassés"""
-    try:
-        forensics = load_forensics()
-        
-        if forensic_id not in forensics:
-            return "Forensic data not found. ID: " + forensic_id, 404
-        
-        forensic_entry = forensics[forensic_id]
-        data = forensic_entry.get("data", {})
-    except Exception as e:
-        print(f"❌ Erreur lecture forensics: {e}")
-        import traceback
-        traceback.print_exc()
-        return f"Error loading forensic data: {str(e)}", 500
+    forensic_file = DATA_DIR / "forensics" / f"{forensic_id}.json"
+    
+    if not forensic_file.exists():
+        return "Forensic data not found", 404
+    
+    data = json.loads(forensic_file.read_text())
     
     # Analyser les données
     blocks = data.get('blocks', [])
@@ -2087,25 +1999,7 @@ def anchor():
             print(f"🆕 Nouveau routeur détecté: {router_name} ({router_id[:16]}...)")
             # Proposer de l'ajouter à REGISTERED_ROUTERS (optionnel, manuel)
         
-        # Préparer les données du routeur
-        router_data_update = {
-            "name": router_name,
-            "public_ip": router_ip,
-            "local_ip": local_ip,
-            "mac_address": router_mac,
-            "total_blocks": total_blocks,
-            "current_hash": snr_hash,
-            "security_status": router_info.get("security_status", "unknown"),
-            "hash_interval": hash_interval,
-            "block_interval": block_interval,
-            "retention_days": retention_days
-        }
-        
-        # Enregistrer/mettre à jour dans la base de données SQLite
-        if USE_DATABASE:
-            add_or_update_router(router_id, router_data_update)
-        
-        # Mettre à jour le hash local (reçu du routeur) pour compatibilité
+        # Mettre à jour le hash local (reçu du routeur)
         router_info["name"] = router_name
         router_info["last_ip"] = router_ip
         router_info["last_seen"] = current_timestamp
@@ -2160,10 +2054,8 @@ def anchor():
                 print(f"   ✅ TXID: {txid}")
                 print(f"   🌐 https://test.whatsonchain.com/tx/{txid}")
                 
-                # Sauvegarder (déjà fait dans DB)
-                if not USE_DATABASE:
-                    routers[router_id] = router_info
-                    save_routers(routers)
+                routers[router_id] = router_info
+                save_routers(routers)
                 
                 return jsonify({
                     "status": "anchored",
@@ -2175,17 +2067,15 @@ def anchor():
                 
             except Exception as anchor_error:
                 print(f"   ❌ Erreur ancrage BSV: {anchor_error}")
-                # Même en cas d'erreur, on sauvegarde le local_hash (déjà fait dans DB)
-                if not USE_DATABASE:
-                    routers[router_id] = router_info
-                    save_routers(routers)
+                # Même en cas d'erreur, on sauvegarde le local_hash
+                routers[router_id] = router_info
+                save_routers(routers)
                 return jsonify({"error": f"Ancrage BSV échoué: {anchor_error}"}), 500
         
         else:
-            # Pas d'ancrage, juste mise à jour local_hash (déjà fait dans DB)
-            if not USE_DATABASE:
-                routers[router_id] = router_info
-                save_routers(routers)
+            # Pas d'ancrage, juste mise à jour local_hash
+            routers[router_id] = router_info
+            save_routers(routers)
             
             next_anchor_in = BSV_ANCHOR_INTERVAL - time_since_anchor
             
@@ -2275,62 +2165,6 @@ def api_security_status(router_id):
     """API pour obtenir le statut de sécurité d'un routeur"""
     security = get_security_status(router_id)
     return jsonify(security)
-
-
-@app.route('/api/breach-details/<router_id>', methods=['GET'])
-def api_breach_details(router_id):
-    """API pour obtenir les détails d'une breach détectée"""
-    routers = load_routers()
-    router_info = routers.get(router_id, {})
-    
-    # Récupérer le statut de sécurité
-    security = get_security_status(router_id)
-    
-    # Hash actuel du routeur
-    local_hash = router_info.get("local_hash", "")
-    router_hash = router_info.get("router_hash", local_hash)  # Alias
-    
-    # Hash ancré sur blockchain
-    bsv_hash = router_info.get("blockchain_hash", "")
-    
-    # Informations sur la breach
-    is_broken = router_info.get("is_broken", False)
-    first_breach_index = router_info.get("first_breach_index", 0)
-    
-    # Total blocks
-    total_blocks = router_info.get("total_blocks", 0)
-    
-    # Calculer les blocks affectés
-    if first_breach_index > 0:
-        affected_blocks = total_blocks - first_breach_index
-    else:
-        affected_blocks = 0
-    
-    # Forensic ID
-    last_seen = router_info.get("last_seen", 0)
-    if last_seen:
-        forensic_time = datetime.fromtimestamp(last_seen).strftime("%Y%m%d%H%M")
-    else:
-        forensic_time = datetime.now().strftime("%Y%m%d%H%M")
-    
-    forensic_id = f"FOR-{forensic_time}-{first_breach_index}"
-    
-    return jsonify({
-        "status": security["status"],
-        "router_id": router_id,
-        "router_hash": router_hash,
-        "bsv_hash": bsv_hash,
-        "is_broken": is_broken,
-        "first_breach_index": first_breach_index,
-        "total_blocks": total_blocks,
-        "affected_blocks": affected_blocks,
-        "forensic_id": forensic_id,
-        "last_seen": last_seen,
-        "router_name": router_info.get("name", "Unknown"),
-        "router_ip": router_info.get("last_ip", "Unknown"),
-        "local_ip": router_info.get("local_ip", "Unknown"),
-        "mac_address": router_info.get("mac_address", "Unknown")
-    })
 
 
 @app.route('/reset', methods=['POST'])
