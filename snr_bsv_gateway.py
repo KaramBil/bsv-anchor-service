@@ -2430,3 +2430,4 @@ if __name__ == "__main__":
     print("\nCtrl+C pour arrêter\n")
     
     app.run(host='0.0.0.0', port=5000, debug=False)
+# Force redeploy Fri Feb  6 03:45:06 PM CET 2026
