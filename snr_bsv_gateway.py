@@ -939,7 +939,10 @@ GRIPID_DASHBOARD_HTML = """
                         </div>
                     </div>
                     
-                    <a href="/explorer/{{ device.id }}" class="btn-gripid">View BSV Explorer →</a>
+                    <div style="display: flex; gap: 10px; margin-top: 15px;">
+                        <a href="/audit/{{ device.id }}" class="btn-gripid" style="flex: 1;">🔍 Audit Détaillé</a>
+                        <a href="/explorer/{{ device.id }}" class="btn-gripid" style="flex: 1;">📊 BSV Explorer</a>
+                    </div>
                 </div>
                 {% endfor %}
             {% else %}
@@ -1361,6 +1364,58 @@ def dashboard():
     )
 
 
+@app.route('/audit/<router_id>')
+def audit(router_id):
+    """Page d'audit détaillée pour un routeur"""
+    routers = load_routers()
+    
+    router_info = routers.get(router_id)
+    if not router_info:
+        return "Router not found", 404
+    
+    security = get_security_status(router_id)
+    stats = get_router_stats(router_id)
+    
+    # Déterminer s'il y a une breach
+    security_breach = security["status"] == "breach"
+    
+    if security_breach:
+        security_message = "Hash mismatch détecté - Possible modification des logs"
+    elif security["status"] == "secure":
+        security_message = "Tous les hashs correspondent - Intégrité vérifiée"
+    else:
+        security_message = "En attente d'ancrage BSV"
+    
+    # Dernière ancre
+    last_anchor_time = "N/A"
+    if security["last_anchor_time"]:
+        last_anchor_time = datetime.fromtimestamp(security["last_anchor_time"]).strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Charger le template
+    template_path = Path(__file__).parent / "audit_template.html"
+    if template_path.exists():
+        template_content = template_path.read_text()
+    else:
+        return "Audit template not found", 500
+    
+    return render_template_string(
+        template_content,
+        device_id=router_id,
+        device_name=router_info.get("name", "GTEN Router"),
+        router_ip=router_info.get("last_ip", "N/A"),
+        local_ip=router_info.get("local_ip", router_info.get("last_ip", "N/A")),
+        mac_address=router_info.get("mac_address", "N/A"),
+        total_blocks=router_info.get("total_blocks", 0),
+        last_seen=datetime.fromtimestamp(router_info.get("last_seen", 0)).strftime("%Y-%m-%d %H:%M:%S") if router_info.get("last_seen") else "Never",
+        total_anchors=stats["total_anchors"],
+        security_breach=security_breach,
+        security_message=security_message,
+        local_hash=security["local_hash"] or "N/A",
+        blockchain_hash=security["blockchain_hash"] or "N/A",
+        last_anchor_time=last_anchor_time
+    )
+
+
 @app.route('/explorer/<router_id>')
 def explorer(router_id):
     """Explorer BSV pour un routeur"""
@@ -1422,7 +1477,11 @@ def anchor():
         router_name = data.get('router_name', "GTEN Router")
         blocks_count = data.get('blocks_count', 0)
         
-        # Paramètres de configuration SNR (nouveaux)
+        # Informations réseau (nouvelles)
+        router_mac = data.get('router_mac', 'N/A')
+        local_ip = data.get('local_ip', router_ip)
+        
+        # Paramètres de configuration SNR
         hash_interval = data.get('hash_interval', 10)
         block_interval = data.get('block_interval', 30)
         retention_days = data.get('retention_days', 3)
@@ -1442,6 +1501,10 @@ def anchor():
         router_info["last_ip"] = router_ip
         router_info["last_seen"] = current_timestamp
         router_info["local_hash"] = snr_hash  # Hash actuel du routeur
+        
+        # Informations réseau
+        router_info["mac_address"] = router_mac
+        router_info["local_ip"] = local_ip
         
         # Stocker les paramètres de configuration SNR
         router_info["hash_interval"] = hash_interval
@@ -1568,6 +1631,8 @@ def get_devices():
             "id": router_id,
             "name": router_info.get("name"),
             "ip": router_info.get("last_ip"),
+            "local_ip": router_info.get("local_ip", router_info.get("last_ip")),
+            "mac_address": router_info.get("mac_address", "N/A"),
             "last_seen": last_seen,
             "seconds_ago": seconds_ago,
             "connection_status": connection_status,
