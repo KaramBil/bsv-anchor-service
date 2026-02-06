@@ -1741,14 +1741,35 @@ def request_forensic_analysis(router_id):
     })
 
 
+@app.route('/api/forensics')
+def api_list_forensics():
+    """Liste tous les forensics disponibles"""
+    try:
+        forensics = load_forensics()
+        return jsonify({
+            "total": len(forensics),
+            "forensics": list(forensics.keys())
+        })
+    except Exception as e:
+        print(f"❌ Erreur liste forensics: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/forensics/<forensic_id>')
 def api_get_forensics(forensic_id):
     """API pour récupérer les données forensiques en JSON"""
     try:
         forensics = load_forensics()
         
+        print(f"🔍 Recherche forensic: {forensic_id}")
+        print(f"   Forensics disponibles: {list(forensics.keys())}")
+        
         if forensic_id not in forensics:
-            return jsonify({"error": "Forensic data not found"}), 404
+            return jsonify({
+                "error": "Forensic data not found",
+                "forensic_id": forensic_id,
+                "available_forensics": list(forensics.keys())
+            }), 404
         
         forensic_data = forensics[forensic_id]
         return jsonify(forensic_data.get("data", {}))
