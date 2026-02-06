@@ -27,6 +27,32 @@ ROUTER_SEND_INTERVAL = int(os.getenv("ROUTER_SEND_INTERVAL", "30"))      # Route
 BSV_ANCHOR_INTERVAL = int(os.getenv("BSV_ANCHOR_INTERVAL", "3600"))      # Ancrage BSV toutes les 1h
 OFFLINE_TIMEOUT = ROUTER_SEND_INTERVAL * 2                               # Offline après 2x l'intervalle d'envoi (60s)
 
+# ============================================================================
+# ROUTEURS ENREGISTRÉS (Configuration permanente)
+# ============================================================================
+# Ces routeurs sont "pinnés" et apparaissent toujours sur le dashboard
+# même après un redéploiement Render (même si pas de données reçues)
+REGISTERED_ROUTERS = {
+    # Format: "router_id": {"name": "...", "location": "...", etc.}
+    # Les routeurs se découvrent automatiquement au premier envoi
+    # Cette liste permet de les garder visibles même après redéploiement
+}
+
+# Variables d'environnement pour ajouter des routeurs sans modifier le code
+# Format: PINNED_ROUTERS="router1:Name1:Location1,router2:Name2:Location2"
+PINNED_ROUTERS_ENV = os.getenv("PINNED_ROUTERS", "")
+if PINNED_ROUTERS_ENV:
+    for router_config in PINNED_ROUTERS_ENV.split(","):
+        parts = router_config.strip().split(":")
+        if len(parts) >= 2:
+            router_id = parts[0]
+            router_name = parts[1]
+            router_location = parts[2] if len(parts) > 2 else "Unknown"
+            REGISTERED_ROUTERS[router_id] = {
+                "name": router_name,
+                "location": router_location,
+            }
+
 # Ajouter le projet gripid au path (si en local)
 BSV_PROJECT = Path("/home/karam/Bureau/SNR/bsv/gripid_bsv_chain")
 if BSV_PROJECT.exists():
@@ -81,6 +107,57 @@ def load_routers():
 def save_routers(routers):
     """Sauvegarde les infos des routeurs"""
     ROUTERS_FILE.write_text(json.dumps(routers, indent=2))
+
+
+def get_all_routers():
+    """
+    Récupère tous les routeurs : enregistrés (persistants) + actifs (volatiles)
+    
+    Les routeurs dans REGISTERED_ROUTERS sont toujours visibles sur le dashboard,
+    même après un redéploiement Render, avec le statut "inactive" par défaut.
+    
+    Dès qu'un routeur envoie des données, il passe automatiquement à "active".
+    """
+    # Charger l'état volatile (depuis routers.json)
+    active_routers = load_routers()
+    
+    # Fusionner avec les routeurs enregistrés
+    all_routers = {}
+    
+    # 1. Ajouter tous les routeurs actifs
+    for router_id, router_data in active_routers.items():
+        all_routers[router_id] = router_data.copy()
+        
+        # Si le routeur est dans REGISTERED_ROUTERS, enrichir avec les infos de config
+        if router_id in REGISTERED_ROUTERS:
+            config = REGISTERED_ROUTERS[router_id]
+            all_routers[router_id]["location"] = config.get("location", "Unknown")
+            all_routers[router_id]["registered"] = True
+            # Garder le nom du routeur qui s'est connecté (plus à jour)
+            if "name" not in all_routers[router_id] or not all_routers[router_id]["name"]:
+                all_routers[router_id]["name"] = config.get("name", "Unknown Router")
+    
+    # 2. Ajouter les routeurs enregistrés qui ne sont pas encore actifs
+    for router_id, config in REGISTERED_ROUTERS.items():
+        if router_id not in all_routers:
+            # Ce routeur est enregistré mais n'a jamais envoyé de données (ou perdu après redéploiement)
+            all_routers[router_id] = {
+                "name": config.get("name", "Unknown Router"),
+                "location": config.get("location", "Unknown"),
+                "registered": True,
+                "last_seen": None,
+                "local_hash": "N/A",
+                "blockchain_hash": "N/A",
+                "last_ip": "N/A",
+                "mac_address": "N/A",
+                "local_ip": "N/A",
+                "total_blocks": 0,
+                "hash_interval": 10,
+                "block_interval": 30,
+                "retention_days": 3,
+            }
+    
+    return all_routers
 
 
 def get_router_stats(router_id):
@@ -453,6 +530,16 @@ GRIPID_DASHBOARD_HTML = """
         .badge-offline {
             background: #6b7280;
             color: white;
+        }
+        
+        .badge-inactive {
+            background: #e5e7eb;
+            color: #6b7280;
+            border: 2px solid #d1d5db;
+        }
+        
+        .status-inactive .device-card {
+            opacity: 0.85;
         }
         
         .connection-info {
@@ -1295,7 +1382,7 @@ GRIPID_EXPLORER_HTML = """
 @app.route('/')
 def dashboard():
     """Dashboard principal avec monitoring de sécurité"""
-    routers = load_routers()
+    routers = get_all_routers()  # Utilise get_all_routers() pour inclure les routeurs enregistrés
     anchors = load_anchors()
     wallet = get_wallet_debug_info()
     
@@ -1308,7 +1395,12 @@ def dashboard():
         security = get_security_status(router_id)
         last_anchor = stats["last_anchor"]
         last_seen_ts = router_info.get("last_seen")
-        connection_status = get_connection_status(last_seen_ts)
+        
+        # Gérer le cas "inactive" pour les routeurs enregistrés sans données
+        if last_seen_ts is None and router_info.get("registered"):
+            connection_status = "inactive"
+        else:
+            connection_status = get_connection_status(last_seen_ts)
         
         # Déterminer le badge et message de sécurité
         if security["status"] == "secure":
@@ -1333,6 +1425,9 @@ def dashboard():
         elif connection_status == "waiting":
             connection_badge = "🟡 WAITING"
             connection_class = "status-waiting"
+        elif connection_status == "inactive":
+            connection_badge = "⚪ INACTIVE"
+            connection_class = "status-inactive"
         else:
             connection_badge = "⚫ OFFLINE"
             connection_class = "status-offline"
@@ -1342,6 +1437,8 @@ def dashboard():
             current_time = int(datetime.now().timestamp())
             seconds_ago = current_time - last_seen_ts
             last_seen_str = f"{seconds_ago}s ago"
+        elif router_info.get("registered"):
+            last_seen_str = "Waiting for data..."
         else:
             last_seen_str = "Never"
         
@@ -1895,6 +1992,12 @@ def anchor():
         # Charger les infos routeurs existantes
         routers = load_routers()
         router_info = routers.get(router_id, {})
+        
+        # Si c'est un nouveau routeur, l'enregistrer automatiquement
+        is_new_router = router_id not in routers
+        if is_new_router:
+            print(f"🆕 Nouveau routeur détecté: {router_name} ({router_id[:16]}...)")
+            # Proposer de l'ajouter à REGISTERED_ROUTERS (optionnel, manuel)
         
         # Mettre à jour le hash local (reçu du routeur)
         router_info["name"] = router_name
