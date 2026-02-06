@@ -2231,6 +2231,62 @@ def api_security_status(router_id):
     return jsonify(security)
 
 
+@app.route('/api/breach-details/<router_id>', methods=['GET'])
+def api_breach_details(router_id):
+    """API pour obtenir les détails d'une breach détectée"""
+    routers = load_routers()
+    router_info = routers.get(router_id, {})
+    
+    # Récupérer le statut de sécurité
+    security = get_security_status(router_id)
+    
+    # Hash actuel du routeur
+    local_hash = router_info.get("local_hash", "")
+    router_hash = router_info.get("router_hash", local_hash)  # Alias
+    
+    # Hash ancré sur blockchain
+    bsv_hash = router_info.get("blockchain_hash", "")
+    
+    # Informations sur la breach
+    is_broken = router_info.get("is_broken", False)
+    first_breach_index = router_info.get("first_breach_index", 0)
+    
+    # Total blocks
+    total_blocks = router_info.get("total_blocks", 0)
+    
+    # Calculer les blocks affectés
+    if first_breach_index > 0:
+        affected_blocks = total_blocks - first_breach_index
+    else:
+        affected_blocks = 0
+    
+    # Forensic ID
+    last_seen = router_info.get("last_seen", 0)
+    if last_seen:
+        forensic_time = datetime.fromtimestamp(last_seen).strftime("%Y%m%d%H%M")
+    else:
+        forensic_time = datetime.now().strftime("%Y%m%d%H%M")
+    
+    forensic_id = f"FOR-{forensic_time}-{first_breach_index}"
+    
+    return jsonify({
+        "status": security["status"],
+        "router_id": router_id,
+        "router_hash": router_hash,
+        "bsv_hash": bsv_hash,
+        "is_broken": is_broken,
+        "first_breach_index": first_breach_index,
+        "total_blocks": total_blocks,
+        "affected_blocks": affected_blocks,
+        "forensic_id": forensic_id,
+        "last_seen": last_seen,
+        "router_name": router_info.get("name", "Unknown"),
+        "router_ip": router_info.get("last_ip", "Unknown"),
+        "local_ip": router_info.get("local_ip", "Unknown"),
+        "mac_address": router_info.get("mac_address", "Unknown")
+    })
+
+
 @app.route('/reset', methods=['POST'])
 def reset_system():
     """Reset complet du système (admin only)"""
