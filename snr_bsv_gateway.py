@@ -9,8 +9,11 @@ import json
 import os
 import sys
 import shutil
+import time
+import subprocess
 from datetime import datetime
 from pathlib import Path
+from flask import Flask, request, jsonify, render_template_string, redirect
 
 # Configuration
 BSV_TESTNET_WIF = os.getenv("BSV_TESTNET_WIF", "cVEVNHpneqzMrghQPhxy6JLcRB2Czgjr9Fg9XWfDdh9ac9Te1mTh")
@@ -1507,9 +1510,70 @@ def receive_forensics():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/request-forensic-analysis/<router_id>', methods=['POST'])
+def request_forensic_analysis(router_id):
+    """Déclenche l'analyse forensique en demandant au routeur d'envoyer tous ses logs"""
+    import subprocess
+    import time
+    
+    routers = load_routers()
+    
+    if router_id not in routers:
+        return jsonify({"status": "error", "message": "Router not found"}), 404
+    
+    router_info = routers[router_id]
+    router_ip = router_info.get('last_ip', '')
+    
+    # Vérifier si on a déjà des données forensiques récentes (moins de 2 minutes)
+    forensic_file = DATA_DIR / "forensics" / f"{router_id}.json"
+    if forensic_file.exists():
+        file_age = time.time() - forensic_file.stat().st_mtime
+        if file_age < 120:  # 2 minutes
+            return jsonify({
+                "status": "success",
+                "message": "Forensic data already available",
+                "forensic_id": router_id
+            })
+    
+    if not router_ip or router_ip == 'N/A':
+        return jsonify({"status": "error", "message": "Router IP not available"}), 400
+    
+    try:
+        # Envoyer la commande au routeur pour qu'il envoie ses logs
+        result = subprocess.run(
+            ['ssh', '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=5',
+             f'root@{router_ip}', 'nohup /root/snr_send_full_logs.sh > /dev/null 2>&1 &'],
+            capture_output=True,
+            timeout=10,
+            text=True
+        )
+        
+        # Attendre que le routeur envoie les données (max 5 secondes)
+        for _ in range(10):
+            time.sleep(0.5)
+            if forensic_file.exists() and time.time() - forensic_file.stat().st_mtime < 5:
+                return jsonify({
+                    "status": "success",
+                    "message": "Forensic analysis complete",
+                    "forensic_id": router_id
+                })
+        
+        return jsonify({
+            "status": "pending",
+            "message": "Request sent to router, waiting for data..."
+        })
+            
+    except Exception as e:
+        print(f"Error triggering forensic: {e}")
+        return jsonify({
+            "status": "error",
+            "message": f"Cannot connect to router: {str(e)}"
+        }), 500
+
+
 @app.route('/forensics/<forensic_id>')
 def view_forensics(forensic_id):
-    """Affiche l'analyse forensique détaillée"""
+    """Affiche l'analyse forensique détaillée avec highlighting des blocks cassés"""
     forensic_file = DATA_DIR / "forensics" / f"{forensic_id}.json"
     
     if not forensic_file.exists():
@@ -1521,22 +1585,40 @@ def view_forensics(forensic_id):
     blocks = data.get('blocks', [])
     total_blocks = len(blocks)
     
-    # Détecter les anomalies dans la chaîne
+    # Détecter les anomalies dans la chaîne ET trouver le premier block cassé
     anomalies = []
+    first_breach_index = None
+    
     for i in range(1, len(blocks)):
         prev_block = blocks[i-1]
         curr_block = blocks[i]
         
         # Vérifier si PREV du block actuel = CHAIN du block précédent
         if curr_block.get('prev_hash') != prev_block.get('chain_hash'):
+            if first_breach_index is None:
+                first_breach_index = i  # Premier block cassé
+            
             anomalies.append({
                 'block_index': i,
                 'type': 'chain_break',
                 'message': f"Block #{i}: PREV hash ne correspond pas au CHAIN précédent",
                 'timestamp': curr_block.get('timestamp'),
                 'expected': prev_block.get('chain_hash'),
-                'actual': curr_block.get('prev_hash')
+                'actual': curr_block.get('prev_hash'),
+                'is_first_breach': (first_breach_index == i)
             })
+            # Marquer le block comme cassé
+            blocks[i]['is_broken'] = True
+    
+    # Si une cassure existe, afficher seulement depuis 2 blocks avant la cassure
+    if first_breach_index is not None:
+        context_start = max(0, first_breach_index - 2)
+        display_blocks = blocks[context_start:]
+        display_message = f"🔴 Affichage des logs depuis le block #{context_start} (2 blocks avant la première cassure)"
+    else:
+        # Pas de cassure, afficher les derniers 30 blocks
+        display_blocks = blocks[-30:] if len(blocks) > 30 else blocks
+        display_message = "✅ Aucune cassure détectée - Affichage des derniers blocks"
     
     # HTML pour l'affichage
     html = f"""
@@ -1605,6 +1687,32 @@ def view_forensics(forensic_id):
                 font-size: 18px;
                 margin-bottom: 10px;
                 font-weight: bold;
+            }}
+            .block-broken {{
+                background: #400 !important;
+                border-left: 5px solid #f00 !important;
+            }}
+            .block-broken td {{
+                color: #f00 !important;
+                font-weight: bold;
+            }}
+            @keyframes blink {{
+                0%, 100% {{ opacity: 1; }}
+                50% {{ opacity: 0.6; }}
+            }}
+            .block-broken {{
+                animation: blink 2s infinite;
+            }}
+            .filter-message {{
+                background: #003;
+                border: 2px solid #0ff;
+                padding: 15px;
+                margin: 20px 0;
+                border-radius: 5px;
+                text-align: center;
+                font-size: 16px;
+                font-weight: bold;
+                color: #0ff;
             }}
             .blocks-table {{
                 width: 100%;
@@ -1679,15 +1787,17 @@ def view_forensics(forensic_id):
                 </div>
             </div>
             
+            <div class="filter-message">{display_message}</div>
+            
             <h2>🚨 Anomalies Detected: {len(anomalies)}</h2>
             {''.join([f'''
             <div class="anomaly">
-                <div class="anomaly-title">❌ {a['type'].upper()} - Block #{a['block_index']}</div>
+                <div class="anomaly-title">{'🚨 PREMIÈRE CASSURE → ' if a.get('is_first_breach') else '❌ '}{a['type'].upper()} - Block #{a['block_index']}</div>
                 <div>{a['message']}</div>
                 <div style="margin-top: 10px; color: #888;">Timestamp: {a['timestamp']}</div>
                 <div style="margin-top: 10px;">
-                    <div>Expected PREV: <span class="hash">{a['expected'][:32]}...</span></div>
-                    <div>Actual PREV: <span class="hash">{a['actual'][:32]}...</span></div>
+                    <div>Expected PREV: <span class="hash" style="color: #0f0;">{a['expected'][:32]}...</span></div>
+                    <div style="color: #f00; font-weight: bold;">Actual PREV: <span class="hash">{a['actual'][:32]}...</span></div>
                 </div>
             </div>
             ''' for a in anomalies]) if anomalies else '<p class="status-ok">✅ No anomalies detected in chain integrity</p>'}
@@ -1706,15 +1816,15 @@ def view_forensics(forensic_id):
                 </thead>
                 <tbody>
                     {''.join([f'''
-                    <tr>
-                        <td>{i}</td>
+                    <tr {'class="block-broken"' if block.get('is_broken') else ''}>
+                        <td>{context_start + i if first_breach_index is not None else (total_blocks - len(display_blocks) + i)}</td>
                         <td>{block.get('timestamp', 'N/A')}</td>
                         <td class="hash">{block.get('logs_hash', 'N/A')[:16]}...</td>
                         <td class="hash">{block.get('prev_hash', 'N/A')[:16]}...</td>
                         <td class="hash">{block.get('chain_hash', 'N/A')[:16]}...</td>
                         <td class="hash">{block.get('global_hash', 'N/A')[:16]}...</td>
                     </tr>
-                    ''' for i, block in enumerate(blocks)])}
+                    ''' for i, block in enumerate(display_blocks)])}
                 </tbody>
             </table>
             

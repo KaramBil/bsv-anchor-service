@@ -380,7 +380,7 @@
                     🔍 Demander Analyse Complète
                 </button>
                 <a href="/explorer/{{ device_id }}" class="btn btn-primary">📊 Voir BSV Explorer</a>
-                <a href="http://{{ local_ip }}/Advanced_SNR_Content.asp" class="btn btn-secondary" target="_blank">🔧 Accéder au Routeur</a>
+                <a href="http://{{ router_ip }}:8080/Advanced_SNR_Content.asp" class="btn btn-secondary" target="_blank">🔧 Accéder au Routeur ({{ router_ip }})</a>
             </div>
             
             <div id="forensicStatus" style="display: none; margin-top: 20px; padding: 20px; background: #e7f3ff; border-radius: 10px; text-align: center;">
@@ -394,31 +394,31 @@
                 const message = document.getElementById('forensicMessage');
                 
                 btn.disabled = true;
-                btn.textContent = '⏳ En cours...';
+                btn.textContent = '⏳ Analyse en cours...';
                 status.style.display = 'block';
-                message.innerHTML = '🔄 Demande d\'analyse forensique envoyée au routeur...<br>Cela peut prendre quelques secondes.';
+                message.innerHTML = '🔄 Récupération des logs forensiques depuis le routeur...<br>Veuillez patienter...';
                 
-                // Demander au routeur d'envoyer ses logs
-                fetch('/trigger-forensic/{{ device_id }}', {
+                // Envoyer la demande d'analyse
+                fetch('/request-forensic-analysis/{{ device_id }}', {
                     method: 'POST'
                 })
                 .then(response => response.json())
                 .then(data => {
-                    if (data.status === 'success' || data.status === 'triggered') {
-                        message.innerHTML = '✅ Demande envoyée au routeur!<br>Les données forensiques seront disponibles dans quelques secondes.';
+                    if (data.status === 'success' && data.forensic_id) {
+                        message.innerHTML = '✅ Analyse forensique générée avec succès!<br>Redirection vers les résultats...';
                         
-                        // Attendre un peu puis recharger
+                        // Rediriger vers la page forensique
                         setTimeout(() => {
-                            window.location.reload();
-                        }, 3000);
+                            window.location.href = '/forensics/' + data.forensic_id;
+                        }, 1500);
                     } else {
-                        message.innerHTML = '❌ Erreur: ' + (data.message || 'Impossible de contacter le routeur');
+                        message.innerHTML = '⚠️ ' + (data.message || 'Analyse en attente - Le routeur doit envoyer les logs');
                         btn.disabled = false;
                         btn.textContent = '🔍 Réessayer';
                     }
                 })
                 .catch(error => {
-                    message.innerHTML = '❌ Erreur de communication: ' + error.message;
+                    message.innerHTML = '❌ Erreur: ' + error.message;
                     btn.disabled = false;
                     btn.textContent = '🔍 Réessayer';
                 });
