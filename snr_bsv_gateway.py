@@ -2485,6 +2485,35 @@ def api_security_status(router_id):
     return jsonify(security)
 
 
+@app.route('/api/last-anchor/<router_id>', methods=['GET'])
+def api_last_anchor(router_id):
+    """API pour obtenir les infos du dernier ancrage BSV - pour vérification indépendante par le SNR"""
+    routers = load_routers()
+    router_info = routers.get(router_id, {})
+    
+    # Informations d'ancrage BSV
+    txid = router_info.get("last_txid", "")
+    blockchain_hash = router_info.get("blockchain_hash", "")
+    anchored_local_hash = router_info.get("anchored_local_hash", "")
+    last_anchor_time = router_info.get("last_anchor_time", 0)
+    
+    # Construire l'URL WhatsOnChain pour vérification
+    whatsonchain_url = ""
+    if txid:
+        whatsonchain_url = f"https://test.whatsonchain.com/tx/{txid}"
+    
+    return jsonify({
+        "success": bool(txid),
+        "router_id": router_id,
+        "txid": txid,
+        "blockchain_hash": blockchain_hash,
+        "anchored_local_hash": anchored_local_hash,
+        "anchor_time": last_anchor_time,
+        "whatsonchain_url": whatsonchain_url,
+        "message": "Use this TXID to verify independently against BSV blockchain"
+    })
+
+
 @app.route('/api/breach-details/<router_id>', methods=['GET'])
 def api_breach_details(router_id):
     """API pour obtenir les détails d'une breach détectée"""
