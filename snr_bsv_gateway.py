@@ -11,9 +11,13 @@ import sys
 import shutil
 import time
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo  # Python 3.9+
 from pathlib import Path
 from flask import Flask, request, jsonify, render_template_string, redirect
+
+# Timezone pour l'Europe (Paris/Brussels)
+EUROPE_TZ = ZoneInfo("Europe/Paris")
 
 # Import du module database SQLite
 USE_DATABASE = False  # Désactivé par défaut, activer via variable ENABLE_DATABASE
@@ -1655,7 +1659,14 @@ def audit(router_id):
     # Dernière ancre
     last_anchor_time = "N/A"
     if security["last_anchor_time"]:
-        last_anchor_time = datetime.fromtimestamp(security["last_anchor_time"]).strftime("%Y-%m-%d %H:%M:%S")
+        dt = datetime.fromtimestamp(security["last_anchor_time"], tz=EUROPE_TZ)
+        last_anchor_time = dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+    
+    # Last seen
+    last_seen_formatted = "Never"
+    if router_info.get("last_seen"):
+        dt = datetime.fromtimestamp(router_info.get("last_seen"), tz=EUROPE_TZ)
+        last_seen_formatted = dt.strftime("%Y-%m-%d %H:%M:%S %Z")
     
     # Charger le template
     template_path = Path(__file__).parent / "audit_template.html"
@@ -1672,7 +1683,7 @@ def audit(router_id):
         local_ip=router_info.get("local_ip", router_info.get("last_ip", "N/A")),
         mac_address=router_info.get("mac_address", "N/A"),
         total_blocks=router_info.get("total_blocks", 0),
-        last_seen=datetime.fromtimestamp(router_info.get("last_seen", 0)).strftime("%Y-%m-%d %H:%M:%S") if router_info.get("last_seen") else "Never",
+        last_seen=last_seen_formatted,
         total_anchors=stats["total_anchors"],
         security_breach=security_breach,
         security_message=security_message,

@@ -324,10 +324,18 @@
                     <div class="hash-box">
                         <div class="hash-title">Local Hash (Current)</div>
                         <div class="hash-value">{{ local_hash }}</div>
+                        <div style="margin-top: 10px; font-size: 12px; color: #666;">
+                            <strong>Calculé par:</strong> SNR Local<br>
+                            <strong>Dernière mise à jour:</strong> {{ last_seen }}
+                        </div>
                     </div>
                     <div class="hash-box">
                         <div class="hash-title">Blockchain Hash (Anchored)</div>
                         <div class="hash-value">{{ blockchain_hash }}</div>
+                        <div style="margin-top: 10px; font-size: 12px; color: #666;">
+                            <strong>Ancré sur:</strong> BSV Testnet<br>
+                            <strong>Date d'ancrage:</strong> {{ last_anchor_time }}
+                        </div>
                     </div>
                 </div>
             </div>
