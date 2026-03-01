@@ -340,6 +340,92 @@
                 </div>
             </div>
             
+            <!-- Slots Timeline (10-minute granularity) -->
+            <div class="audit-section" style="margin-top: 30px;">
+                <div class="section-title">📊 Timeline des Slots (10 minutes)</div>
+                
+                <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; margin-bottom: 20px;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 15px; font-size: 12px; color: #666;">
+                        <div><strong>Légende:</strong></div>
+                        <div><span style="color: #28a745;">🟢 Sécurisé</span> • <span style="color: #dc3545;">🔴 Breached</span> • <span style="color: #ffc107;">🟡 Cascade</span> • <span style="color: #999;">⚪ Pending</span></div>
+                    </div>
+                    
+                    <div id="slots-timeline" style="display: flex; flex-direction: column; gap: 10px;">
+                        {% if slots %}
+                            {% for slot in slots %}
+                            <div style="display: flex; align-items: center; background: white; padding: 15px; border-radius: 8px; border-left: 4px solid 
+                                {% if slot.status == 'breach' %}#dc3545
+                                {% elif slot.status == 'cascade' %}#ffc107
+                                {% elif slot.status == 'secure' %}#28a745
+                                {% else %}#999{% endif %};">
+                                
+                                <div style="flex: 0 0 120px; font-weight: 600; font-size: 14px;">
+                                    {{ slot.slot }}
+                                </div>
+                                
+                                <div style="flex: 0 0 100px; font-size: 12px; color: #666;">
+                                    {{ slot.date }}
+                                </div>
+                                
+                                <div style="flex: 1; font-family: monospace; font-size: 11px; color: #666; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                    {{ slot.slot_hash[:32] }}...
+                                </div>
+                                
+                                <div style="flex: 0 0 120px; text-align: right;">
+                                    {% if slot.status == 'breach' %}
+                                        <span style="background: #dc3545; color: white; padding: 5px 12px; border-radius: 5px; font-weight: 600; font-size: 12px;">🔴 BREACH</span>
+                                    {% elif slot.status == 'cascade' %}
+                                        <span style="background: #ffc107; color: #333; padding: 5px 12px; border-radius: 5px; font-weight: 600; font-size: 12px;">🟡 CASCADE</span>
+                                    {% elif slot.status == 'secure' %}
+                                        <span style="background: #28a745; color: white; padding: 5px 12px; border-radius: 5px; font-weight: 600; font-size: 12px;">🟢 OK</span>
+                                    {% else %}
+                                        <span style="background: #999; color: white; padding: 5px 12px; border-radius: 5px; font-weight: 600; font-size: 12px;">⚪ PENDING</span>
+                                    {% endif %}
+                                </div>
+                                
+                                {% if slot.txid %}
+                                <div style="flex: 0 0 100px; text-align: right;">
+                                    <a href="https://test.whatsonchain.com/tx/{{ slot.txid }}" target="_blank" style="color: var(--gripid-orange); font-size: 12px; text-decoration: none;">
+                                        🔗 BSV
+                                    </a>
+                                </div>
+                                {% endif %}
+                            </div>
+                            {% endfor %}
+                        {% else %}
+                        <div class="empty-state">
+                            <div style="font-size: 40px; margin-bottom: 15px;">⏳</div>
+                            <p style="color: #999;">Aucun slot finalisé pour le moment.</p>
+                            <p style="font-size: 12px; color: #ccc;">Les slots de 10 minutes apparaîtront ici dès qu'ils seront créés par le SNR.</p>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                
+                {% if compromised_slots %}
+                <div style="background: #f8d7da; border: 1px solid #f5c6cb; padding: 20px; border-radius: 10px;">
+                    <h3 style="color: #721c24; margin-bottom: 15px;">🚨 Slots Compromis Détectés</h3>
+                    {% for cslot in compromised_slots %}
+                    <div style="background: white; padding: 15px; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid #dc3545;">
+                        <div style="display: grid; grid-template-columns: 150px 1fr; gap: 10px; font-size: 13px;">
+                            <div><strong>Slot:</strong></div>
+                            <div>{{ cslot.slot }} ({{ cslot.date }})</div>
+                            
+                            <div><strong>Hash Attendu (BSV):</strong></div>
+                            <div style="font-family: monospace; word-break: break-all; color: #28a745;">{{ cslot.expected_hash }}</div>
+                            
+                            <div><strong>Hash Reçu (SNR):</strong></div>
+                            <div style="font-family: monospace; word-break: break-all; color: #dc3545;">{{ cslot.received_hash }}</div>
+                            
+                            <div><strong>TXID Blockchain:</strong></div>
+                            <div><a href="https://test.whatsonchain.com/tx/{{ cslot.txid }}" target="_blank" style="color: var(--gripid-orange);">{{ cslot.txid }}</a></div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </div>
+            
             <!-- Audit Details -->
             {% if security_breach %}
             <div class="audit-section">

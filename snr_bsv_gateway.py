@@ -1689,7 +1689,9 @@ def audit(router_id):
         security_message=security_message,
         local_hash=security["local_hash"] or "N/A",
         blockchain_hash=security["blockchain_hash"] or "N/A",
-        last_anchor_time=last_anchor_time
+        last_anchor_time=last_anchor_time,
+        slots=router_info.get("slots", []),
+        compromised_slots=router_info.get("compromised_slots", [])
     )
 
 
